@@ -1,0 +1,5 @@
+mac-sender
+*.app
+
+windows-injector/bin/
+windows-injector/obj/
