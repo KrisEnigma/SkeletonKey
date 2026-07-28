@@ -8,19 +8,19 @@
     "net8.0": []
   },
   "packageFolders": {
-    "/Users/Kris/.nuget/packages/": {}
+    "C:\\Users\\Kris\\.nuget\\packages\\": {}
   },
   "project": {
     "version": "1.0.0",
     "restore": {
-      "projectUniqueName": "/Users/Kris/Projects/KrisKVM/windows-injector/WindowsInjector.csproj",
+      "projectUniqueName": "F:\\Projects\\Programming\\KrisKVM\\windows-injector\\WindowsInjector.csproj",
       "projectName": "WindowsInjector",
-      "projectPath": "/Users/Kris/Projects/KrisKVM/windows-injector/WindowsInjector.csproj",
-      "packagesPath": "/Users/Kris/.nuget/packages/",
-      "outputPath": "/Users/Kris/Projects/KrisKVM/windows-injector/obj/",
+      "projectPath": "F:\\Projects\\Programming\\KrisKVM\\windows-injector\\WindowsInjector.csproj",
+      "packagesPath": "C:\\Users\\Kris\\.nuget\\packages\\",
+      "outputPath": "F:\\Projects\\Programming\\KrisKVM\\windows-injector\\obj\\",
       "projectStyle": "PackageReference",
       "configFilePaths": [
-        "/Users/Kris/.nuget/NuGet/NuGet.Config"
+        "C:\\Users\\Kris\\AppData\\Roaming\\NuGet\\NuGet.Config"
       ],
       "originalTargetFrameworks": [
         "net8.0"
@@ -44,7 +44,7 @@
         "auditLevel": "low",
         "auditMode": "direct"
       },
-      "SdkAnalysisLevel": "9.0.300"
+      "SdkAnalysisLevel": "10.0.100"
     },
     "frameworks": {
       "net8.0": {
@@ -63,15 +63,19 @@
         "downloadDependencies": [
           {
             "name": "Microsoft.AspNetCore.App.Ref",
-            "version": "[8.0.19, 8.0.19]"
+            "version": "[8.0.29, 8.0.29]"
           },
           {
-            "name": "Microsoft.NETCore.App.Host.osx-arm64",
-            "version": "[8.0.19, 8.0.19]"
+            "name": "Microsoft.NETCore.App.Host.win-x64",
+            "version": "[8.0.29, 8.0.29]"
           },
           {
             "name": "Microsoft.NETCore.App.Ref",
-            "version": "[8.0.19, 8.0.19]"
+            "version": "[8.0.29, 8.0.29]"
+          },
+          {
+            "name": "Microsoft.WindowsDesktop.App.Ref",
+            "version": "[8.0.29, 8.0.29]"
           }
         ],
         "frameworkReferences": {
@@ -79,7 +83,7 @@
             "privateAssets": "all"
           }
         },
-        "runtimeIdentifierGraphPath": "/usr/local/share/dotnet/sdk/9.0.304/PortableRuntimeIdentifierGraph.json"
+        "runtimeIdentifierGraphPath": "C:\\Program Files\\dotnet\\sdk\\10.0.110/PortableRuntimeIdentifierGraph.json"
       }
     }
   }

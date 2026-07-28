@@ -1,12 +1,13 @@
 {
   "version": 2,
-  "dgSpecHash": "ZR8ajTiYXUM=",
+  "dgSpecHash": "qALgDxvRkcs=",
   "success": true,
-  "projectFilePath": "/Users/Kris/Projects/KrisKVM/windows-injector/WindowsInjector.csproj",
+  "projectFilePath": "F:\\Projects\\Programming\\KrisKVM\\windows-injector\\WindowsInjector.csproj",
   "expectedPackageFiles": [
-    "/Users/Kris/.nuget/packages/microsoft.netcore.app.ref/8.0.19/microsoft.netcore.app.ref.8.0.19.nupkg.sha512",
-    "/Users/Kris/.nuget/packages/microsoft.aspnetcore.app.ref/8.0.19/microsoft.aspnetcore.app.ref.8.0.19.nupkg.sha512",
-    "/Users/Kris/.nuget/packages/microsoft.netcore.app.host.osx-arm64/8.0.19/microsoft.netcore.app.host.osx-arm64.8.0.19.nupkg.sha512"
+    "C:\\Users\\Kris\\.nuget\\packages\\microsoft.netcore.app.ref\\8.0.29\\microsoft.netcore.app.ref.8.0.29.nupkg.sha512",
+    "C:\\Users\\Kris\\.nuget\\packages\\microsoft.windowsdesktop.app.ref\\8.0.29\\microsoft.windowsdesktop.app.ref.8.0.29.nupkg.sha512",
+    "C:\\Users\\Kris\\.nuget\\packages\\microsoft.aspnetcore.app.ref\\8.0.29\\microsoft.aspnetcore.app.ref.8.0.29.nupkg.sha512",
+    "C:\\Users\\Kris\\.nuget\\packages\\microsoft.netcore.app.host.win-x64\\8.0.29\\microsoft.netcore.app.host.win-x64.8.0.29.nupkg.sha512"
   ],
   "logs": []
 }

@@ -13,7 +13,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("WindowsInjector")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Debug")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+db2dbd655bfe03e8455ba066839f78c33fc19174")]
 [assembly: System.Reflection.AssemblyProductAttribute("WindowsInjector")]
 [assembly: System.Reflection.AssemblyTitleAttribute("WindowsInjector")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]
