@@ -34,93 +34,6 @@ private final class SharedState {
     }
 }
 
-private final class StatusBarController {
-    private let statusItem: NSStatusItem
-    private let menu = NSMenu()
-    private let stateItem = NSMenuItem(title: "Remote: Off", action: nil, keyEquivalent: "")
-    private let connectionItem = NSMenuItem(title: "Connection: Disconnected", action: nil, keyEquivalent: "")
-    private let toggleItem = NSMenuItem(title: "Toggle Remote", action: nil, keyEquivalent: "")
-    private let toggleTarget = MenuActionTarget()
-
-    init() {
-        statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-        if let button = statusItem.button {
-            button.image = Self.statusImage(color: .systemRed)
-            button.imagePosition = .imageOnly
-            button.toolTip = "KrisKVM"
-        }
-
-        stateItem.isEnabled = false
-        connectionItem.isEnabled = false
-        toggleItem.target = toggleTarget
-        toggleItem.action = #selector(MenuActionTarget.invoke)
-        menu.addItem(stateItem)
-        menu.addItem(connectionItem)
-        menu.addItem(.separator())
-        menu.addItem(toggleItem)
-        menu.addItem(.separator())
-        let quitItem = NSMenuItem(title: "Quit", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
-        quitItem.target = NSApp
-        menu.addItem(quitItem)
-        statusItem.menu = menu
-    }
-
-    func setToggleAction(_ action: @escaping () -> Void) {
-        toggleTarget.action = action
-    }
-
-    func update(remoteActive: Bool, connectionState: ConnectionState) {
-        DispatchQueue.main.async {
-            self.stateItem.title = remoteActive ? "Remote: On" : "Remote: Off"
-
-            switch connectionState {
-            case .disconnected:
-                self.connectionItem.title = "Connection: Disconnected"
-            case .connecting:
-                self.connectionItem.title = "Connection: Connecting"
-            case .connected:
-                self.connectionItem.title = "Connection: Connected"
-            }
-
-            let color: NSColor
-            if remoteActive {
-                color = connectionState == .connected ? .systemGreen : .systemOrange
-            } else {
-                color = .systemRed
-            }
-
-            self.statusItem.button?.image = Self.statusImage(color: color)
-            self.statusItem.button?.toolTip = remoteActive ? "KrisKVM: active" : "KrisKVM: inactive"
-        }
-    }
-
-    private static func statusImage(color: NSColor) -> NSImage {
-        let size = NSSize(width: 16, height: 16)
-        let image = NSImage(size: size)
-        image.lockFocus()
-
-        color.setFill()
-        let circle = NSBezierPath(ovalIn: CGRect(x: 2, y: 2, width: 12, height: 12))
-        circle.fill()
-
-        NSColor.black.withAlphaComponent(0.15).setStroke()
-        circle.lineWidth = 1
-        circle.stroke()
-
-        image.unlockFocus()
-        image.isTemplate = false
-        return image
-    }
-
-    private final class MenuActionTarget: NSObject {
-        var action: (() -> Void)?
-
-        @objc func invoke() {
-            action?()
-        }
-    }
-}
-
 private final class ConnectionManager {
     private let host: String
     private let port: UInt16
@@ -370,7 +283,6 @@ private final class HotKeyController {
 
 final class KrisKVMAppDelegate: NSObject, NSApplicationDelegate {
     private let state = SharedState()
-    private var statusBarController: StatusBarController!
     private var connectionManager: ConnectionManager!
     private var mouseRouter: MouseEventRouter!
     private let hotKeys = HotKeyController()
@@ -383,7 +295,6 @@ final class KrisKVMAppDelegate: NSObject, NSApplicationDelegate {
         let portArgument = CommandLine.arguments.dropFirst(2).first
         let port = UInt16(portArgument.flatMap { UInt16($0) } ?? 12653)
 
-        statusBarController = StatusBarController()
         connectionManager = ConnectionManager(host: host, port: port)
         mouseRouter = MouseEventRouter(state: state, connection: connectionManager)
 
@@ -393,12 +304,6 @@ final class KrisKVMAppDelegate: NSObject, NSApplicationDelegate {
         connectionManager.onStateChange = { [weak self] connectionState in
             guard let self else { return }
             self.state.setConnectionState(connectionState)
-            self.statusBarController.update(remoteActive: self.state.isRemoteActive(), connectionState: connectionState)
-        }
-
-        statusBarController.update(remoteActive: false, connectionState: .disconnected)
-        statusBarController.setToggleAction { [weak self] in
-            self?.toggleRemoteMode()
         }
 
         if let tap = mouseRouter.installEventTap() {
@@ -430,18 +335,6 @@ final class KrisKVMAppDelegate: NSObject, NSApplicationDelegate {
             connectionManager.ensureConnected()
         }
 
-        statusBarController.update(remoteActive: newValue, connectionState: state.connectionStateValue())
         print("remoteActive=\(newValue)")
-    }
-}
-
-@main
-struct KrisKVMApp {
-    static func main() {
-        let app = NSApplication.shared
-        let delegate = KrisKVMAppDelegate()
-        app.delegate = delegate
-        app.setActivationPolicy(.accessory)
-        app.run()
     }
 }

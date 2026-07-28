@@ -1,5 +1,7 @@
 mac-sender
 *.app
+build/
+.DS_Store
 
 windows-injector/bin/
 windows-injector/obj/

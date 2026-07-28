@@ -2,33 +2,36 @@
 
 Outbound-only Mac-to-Windows remote input POC.
 
-## Build
+## Build the app
 
-Mac:
+Mac app bundle:
 ```bash
-swiftc mac-sender.swift -o mac-sender -framework AppKit -framework Carbon -framework CoreGraphics -framework Network
+sh build-mac-app.sh
 ```
 
-Windows:
+Windows injector:
 ```powershell
 dotnet run --project .\windows-injector -- 12653
 ```
 
-## Local LAN test
+## Run locally
 
 1. Start the Windows injector:
 ```powershell
 dotnet run --project .\windows-injector -- 12653
 ```
 
-2. Start the Mac app:
+2. Build the Mac app and open the launcher bundle:
 ```bash
-./mac-sender 192.168.0.100 12653
+sh build-mac-app.sh
+open build/KrisKVM.app
 ```
 
-3. Press `Cmd+Option+K` to toggle forwarding.
+3. The launcher starts `mac-sender` in the background.
 
-## Ngrok test
+4. Press `Cmd+Option+K` in the running capture binary to toggle forwarding.
+
+## Run with ngrok
 
 Use this when the Mac cannot reach Windows directly:
 
@@ -42,22 +45,26 @@ dotnet run --project .\windows-injector -- 12653
 ngrok tcp 12653
 ```
 
-3. Launch the Mac app with the ngrok host and port:
+3. Open the Mac launcher and pass the ngrok host and port:
 ```bash
-./mac-sender <ngrok-host> <ngrok-port>
+sh build-mac-app.sh
+open build/KrisKVM.app --args <ngrok-host> <ngrok-port>
 ```
 
 Example:
 ```bash
-./mac-sender 0.tcp.sa.ngrok.io 12653
+open build/KrisKVM.app --args 0.tcp.sa.ngrok.io 12653
 ```
 
-## Expected behavior
+## What the app does
 
-- Menu bar icon is red when off.
-- Icon turns orange while connecting.
-- Icon turns green when connected and remote mode is on.
-- Mouse movement, clicks, and scroll are forwarded from Mac to Windows.
+- The launcher shows the only menu bar icon, not a Dock app.
+- It starts and stops the working capture binary in the background.
+- The capture binary is headless and stays out of the UI.
+- Red means inactive.
+- Orange means connecting.
+- Green means connected and active.
+- Mouse movement, clicks, and scroll are forwarded from the capture binary to Windows.
 
 ## Notes
 
