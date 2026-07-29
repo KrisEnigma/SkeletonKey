@@ -97,6 +97,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
 
         var statusText = error
             ?? (capturing ? "Capturing" : connected ? "Connected (idle)" : listening ? $"Listening on {port}" : "Stopped");
+        // Tray tooltip keeps the port; the window pill is state-only.
         trayIcon.Text = $"SkeletonKey: {statusText}";
         statusMenuItem.Text = statusText;
 
@@ -197,9 +198,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
 
     private void ShowSettings()
     {
-        settingsForm.Show();
-        settingsForm.WindowState = FormWindowState.Normal;
-        settingsForm.Activate();
+        settingsForm.Present();
     }
 
     private void ExitApplication()

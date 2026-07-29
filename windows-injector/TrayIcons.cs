@@ -91,8 +91,9 @@ internal static class TrayIcons
             return cachedBrandBitmap;
         }
 
-        using var icon = AppIcon;
-        cachedBrandBitmap = icon.ToBitmap();
+        // Do not `using` AppIcon — that would dispose the shared cache and
+        // later blow up Form/tray icon use with ObjectDisposedException.
+        cachedBrandBitmap = AppIcon.ToBitmap();
         return cachedBrandBitmap;
     }
 
