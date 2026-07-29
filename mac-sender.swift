@@ -6,10 +6,10 @@ import Foundation
 import Network
 
 private let appLogURL = FileManager.default.homeDirectoryForCurrentUser
-    .appendingPathComponent("Library/Logs/KrisKVM/app.log")
+    .appendingPathComponent("Library/Logs/SkeletonKey/app.log")
 
 private func appLog(_ line: String) {
-    let message = "[KrisKVM] \(line)\n"
+    let message = "[SkeletonKey] \(line)\n"
     let data = Data(message.utf8)
     let directory = appLogURL.deletingLastPathComponent()
     try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
@@ -34,8 +34,8 @@ private func requestInputMonitoringAccess() {
     let alreadyGranted = CGPreflightListenEventAccess()
     appLog("Input Monitoring granted: \(alreadyGranted)")
     guard alreadyGranted == false else { return }
-    // This does NOT show a system alert like Accessibility does — it just
-    // silently adds KrisKVM to Privacy & Security > Input Monitoring in an
+    // This does NOT show a system alert like Accessibility does, it just
+    // silently adds SkeletonKey to Privacy & Security > Input Monitoring in an
     // unchecked state. It has to be enabled manually there, then the app
     // relaunched, before keyboard events will actually reach the tap.
     _ = CGRequestListenEventAccess()
@@ -51,9 +51,9 @@ struct HistoryEntry: Equatable {
 }
 
 private enum SavedEndpoint {
-    private static let hostKey = "KrisKVM.savedHost"
-    private static let portKey = "KrisKVM.savedPort"
-    private static let historyKey = "KrisKVM.recentEndpoints"
+    private static let hostKey = "SkeletonKey.savedHost"
+    private static let portKey = "SkeletonKey.savedPort"
+    private static let historyKey = "SkeletonKey.recentEndpoints"
     private static let historyLimit = 5
 
     static func load(defaultHost: String, defaultPort: UInt16) -> (host: String, port: UInt16) {
@@ -119,7 +119,7 @@ private final class SharedState {
     }
 
     /// True only once the user has asked to forward *and* the connection is
-    /// actually live — not merely while attempting/retrying. Input capture
+    /// actually live, not merely while attempting/retrying. Input capture
     /// (event swallowing, cursor takeover) should key off this, not off the
     /// raw toggle intent, so a slow or dropped connection doesn't leave the
     /// Mac's own cursor frozen for no reason.
@@ -142,7 +142,7 @@ private final class StatusBarController {
         if let button = statusItem.button {
             button.image = Self.statusImage(color: .systemRed)
             button.imagePosition = .imageOnly
-            button.toolTip = "KrisKVM"
+            button.toolTip = "SkeletonKey"
         }
 
         stateItem.isEnabled = false
@@ -188,7 +188,7 @@ private final class StatusBarController {
             }
 
             self.statusItem.button?.image = Self.statusImage(color: color)
-            self.statusItem.button?.toolTip = remoteActive ? "KrisKVM: active" : "KrisKVM: inactive"
+            self.statusItem.button?.toolTip = remoteActive ? "SkeletonKey: active" : "SkeletonKey: inactive"
         }
     }
 
@@ -241,7 +241,7 @@ private final class ControlWindowController: NSWindowController, NSComboBoxDeleg
             backing: .buffered,
             defer: false
         )
-        window.title = "KrisKVM"
+        window.title = "SkeletonKey"
         window.titlebarAppearsTransparent = true
         window.titleVisibility = .hidden
         window.isMovableByWindowBackground = true
@@ -349,7 +349,7 @@ private final class ControlWindowController: NSWindowController, NSComboBoxDeleg
             effectView.bottomAnchor.constraint(equalTo: contentView.bottomAnchor)
         ])
 
-        let appNameLabel = NSTextField(labelWithString: "KRISKVM")
+        let appNameLabel = NSTextField(labelWithString: "SKELETONKEY")
         appNameLabel.font = .systemFont(ofSize: 11, weight: .semibold)
         appNameLabel.textColor = .tertiaryLabelColor
 
@@ -390,7 +390,7 @@ private final class ControlWindowController: NSWindowController, NSComboBoxDeleg
 
         let sectionLabel = makeFieldLabel("Endpoint")
 
-        configureAddressField(addressField, placeholder: "host:port — e.g. 0.tcp.ngrok.io:12653")
+        configureAddressField(addressField, placeholder: "host:port, e.g. 0.tcp.ngrok.io:12653")
         addressField.delegate = self
         addressField.translatesAutoresizingMaskIntoConstraints = false
 
@@ -740,7 +740,7 @@ private final class KeyboardEventRouter {
 
     // Modifiers we've actually confirmed sending "down" for. A modifier can
     // be physically held (e.g. Option, from habit, or Cmd/Option already
-    // down when capture turns on) without us ever having sent its "down" —
+    // down when capture turns on) without us ever having sent its "down" ,
     // forwarding its eventual "up" anyway sends Windows an unmatched key
     // release, and for the Windows key specifically that's enough to pop
     // open the Start Menu and steal focus, which looked like a "stuck" key.
@@ -766,7 +766,7 @@ private final class KeyboardEventRouter {
     }
 
     fileprivate func handle(type: CGEventType, event: CGEvent) -> Bool {
-        // Unconditional, regardless of capture state — this is the ground
+        // Unconditional, regardless of capture state, this is the ground
         // truth for whether the tap is receiving keyboard events at all.
         // Mouse-only taps need just Accessibility permission; keyDown/keyUp
         // specifically also require Input Monitoring, a separate grant. If
@@ -780,7 +780,7 @@ private final class KeyboardEventRouter {
         }
 
         // The toggle hotkey is the app's own local control gesture, not
-        // something the remote machine should ever see — and it must keep
+        // something the remote machine should ever see, and it must keep
         // reaching the separate global-hotkey listener even while we're
         // capturing, or there'd be no way to turn capture back off.
         if isToggleHotkeyKeyEvent(type: type, event: event) {
@@ -822,7 +822,7 @@ private final class KeyboardEventRouter {
         // Deliberately NOT including Option/Alt here. On Spanish/European
         // layouts, Option/AltGr is how you type ordinary punctuation that
         // has no direct key of its own (backslash, pipe, @, ~, brackets,
-        // etc.) — treating it as a shortcut modifier broke typing those
+        // etc.), treating it as a shortcut modifier broke typing those
         // characters, which matters far more than Alt+letter menu shortcuts
         // working on Windows. That's a known limitation for now.
         let isShortcutContext = flags.contains(.maskCommand) || flags.contains(.maskControl)
@@ -844,13 +844,13 @@ private final class KeyboardEventRouter {
         if isDown {
             guard let text = unicodeString(for: keyCode, flags: flags), !text.isEmpty else {
                 // A dead key (e.g. the accent key alone) resolves to nothing
-                // until the following key completes it — nothing to send yet.
+                // until the following key completes it, nothing to send yet.
                 appLog("keyboard: keyCode \(keyCode) produced no text (dead key or unmapped)")
                 return
             }
             // Any armed modifier (Shift, or Option/AltGr on layouts where it
             // produces punctuation like backslash) is already fully baked
-            // into this character — drop it silently rather than also
+            // into this character, drop it silently rather than also
             // forwarding it as a separate press. For Shift that's just
             // redundant; for Alt it could actually confuse the receiving
             // app mid-keystroke.
@@ -868,7 +868,7 @@ private final class KeyboardEventRouter {
         }
     }
 
-    /// Modifiers only get flushed automatically ahead of a *keyboard* key —
+    /// Modifiers only get flushed automatically ahead of a *keyboard* key ,
     /// but Ctrl/Alt held for a mouse action (Ctrl+click, Alt+drag, etc.)
     /// would otherwise never get sent, since nothing keyboard-side ever
     /// triggers the flush. The tap dispatcher calls this ahead of every
@@ -906,7 +906,7 @@ private final class KeyboardEventRouter {
         if armedModifiers.removeValue(forKey: keyCode) != nil {
             // Released while still only armed (never flushed by a following
             // key). If it were part of the toggle hotkey or a real shortcut,
-            // that following key would already have cleared or flushed it —
+            // that following key would already have cleared or flushed it ,
             // so reaching here means it was genuinely tapped alone (e.g. a
             // solo Windows-key tap to open the Start Menu). Send the full
             // down+up now rather than dropping it.
@@ -918,7 +918,7 @@ private final class KeyboardEventRouter {
 
         guard sentModifierKeyCodes.remove(keyCode) != nil else {
             // We never confirmed sending its "down" (e.g. it was already
-            // held before capture turned on) — forwarding this "up" alone
+            // held before capture turned on), forwarding this "up" alone
             // would tell Windows a key was released that, as far as it
             // knows, was never pressed. For the Windows key specifically
             // that's enough to pop the Start Menu, so skip it.
@@ -999,7 +999,7 @@ private final class KeyboardEventRouter {
     }
 
     // Keys whose meaning depends on being recognized as that specific key,
-    // not on the character they'd otherwise type — always sent as real
+    // not on the character they'd otherwise type, always sent as real
     // virtual-key presses regardless of modifiers.
     private static let controlKeyVirtualCodes: [CGKeyCode: UInt16] = [
         CGKeyCode(kVK_Return): 0x0D,
@@ -1215,7 +1215,7 @@ private final class HotKeyController {
     }
 }
 
-final class KrisKVMAppDelegate: NSObject, NSApplicationDelegate {
+final class SkeletonKeyAppDelegate: NSObject, NSApplicationDelegate {
     private let state = SharedState()
     private var host = "192.168.0.100"
     private var port: UInt16 = 12653
@@ -1299,7 +1299,7 @@ final class KrisKVMAppDelegate: NSObject, NSApplicationDelegate {
             self?.toggleRemoteMode()
         }
 
-        appLog("KrisKVM ready. Toggle remote mode with Cmd+Option+K.")
+        appLog("SkeletonKey ready. Toggle remote mode with Cmd+Option+K.")
         appLog("Host: \(host) Port: \(port)")
         controlWindow.showWindow(nil)
     }
@@ -1321,7 +1321,7 @@ final class KrisKVMAppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func toggleRemoteMode() {
-        // Pure capture on/off — it never itself starts or retries the
+        // Pure capture on/off, it never itself starts or retries the
         // connection. The connection already runs on its own in the
         // background; this just decides whether we act on it. If we're not
         // actually connected yet, refreshCaptureState() below will simply
@@ -1362,15 +1362,16 @@ final class KrisKVMAppDelegate: NSObject, NSApplicationDelegate {
 
         // The TCP connection itself is a persistent background service that
         // stays up regardless of the hotkey, so Windows can't infer capture
-        // state from socket connect/disconnect alone — tell it explicitly.
+        // state from socket connect/disconnect alone, tell it explicitly.
         connectionManager.send("capturing \(capturing ? "on" : "off")")
         appLog("capturing=\(capturing)")
     }
 
-    /// The app never had a standard application menu, so ⌘Q had nothing to
-    /// bind to — it's unrelated to mouse capture. This gives it the usual
-    /// "AppName / Quit AppName ⌘Q" menu so Cmd+Q works whenever KrisKVM is
-    /// the active app on the Mac, exactly like any other Mac app.
+    /// The app never had a standard application menu, so Cmd+Q had nothing
+    /// to bind to (it's unrelated to mouse capture). This gives it the usual
+    /// "AppName / Quit AppName Cmd+Q" menu so Cmd+Q works whenever
+    /// SkeletonKey is the active app on the Mac, exactly like any other Mac
+    /// app.
     private func installMainMenu() {
         let mainMenu = NSMenu()
 
@@ -1378,7 +1379,7 @@ final class KrisKVMAppDelegate: NSObject, NSApplicationDelegate {
         mainMenu.addItem(appMenuItem)
 
         let appMenu = NSMenu()
-        let quitItem = NSMenuItem(title: "Quit KrisKVM", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+        let quitItem = NSMenuItem(title: "Quit SkeletonKey", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         quitItem.target = NSApp
         appMenu.addItem(quitItem)
         appMenuItem.submenu = appMenu

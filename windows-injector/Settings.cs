@@ -12,7 +12,7 @@ internal static class Settings
 
     private static string FilePath => Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
-        "KrisKVM",
+        "SkeletonKey",
         "settings.json");
 
     public static int LoadPort()
@@ -33,7 +33,7 @@ internal static class Settings
         }
         catch
         {
-            // Corrupt or unreadable settings file — fall back to default.
+            // Corrupt or unreadable settings file, fall back to default.
         }
 
         return DefaultPort;
@@ -53,7 +53,7 @@ internal static class Settings
         }
         catch
         {
-            // Non-fatal — the port just won't persist to the next launch.
+            // Non-fatal, the port just won't persist to the next launch.
         }
     }
 }

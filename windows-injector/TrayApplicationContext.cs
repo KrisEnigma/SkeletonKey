@@ -6,8 +6,8 @@ namespace WindowsInjector;
 /// <summary>
 /// Owns the tray icon, the settings window, and the listener's lifecycle.
 /// Using ApplicationContext instead of a normal Form-based Main means the
-/// app has no primary window that, if closed, would quit the whole app —
-/// same tray-icon-persists model as the Mac app's menu bar item.
+/// app has no primary window that, if closed, would quit the whole app.
+/// Same tray-icon-persists model as the Mac app's menu bar item.
 /// </summary>
 internal sealed class TrayApplicationContext : ApplicationContext
 {
@@ -24,7 +24,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
         _ = settingsForm.Handle;
 
         statusMenuItem = new ToolStripMenuItem("Starting…") { Enabled = false };
-        var openItem = new ToolStripMenuItem("Open KrisKVM", null, (_, _) => ShowSettings());
+        var openItem = new ToolStripMenuItem("Open SkeletonKey", null, (_, _) => ShowSettings());
         var quitItem = new ToolStripMenuItem("Quit", null, (_, _) => ExitApplication());
 
         var menu = new ContextMenuStrip();
@@ -36,7 +36,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
         trayIcon = new NotifyIcon
         {
             Icon = TrayIcons.CreateDot(Color.Red),
-            Text = "KrisKVM",
+            Text = "SkeletonKey",
             Visible = true,
             ContextMenuStrip = menu
         };
@@ -57,7 +57,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
         var startPort = cliPortOverride ?? Settings.LoadPort();
         listener.Start(startPort);
 
-        // Shown on launch, same as the Mac app's control window — closing it
+        // Shown on launch, same as the Mac app's control window. Closing it
         // just hides it (see SettingsForm.OnFormClosing).
         settingsForm.Show();
     }
@@ -80,7 +80,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
 
         var statusText = error
             ?? (capturing ? "Capturing" : connected ? "Connected (idle)" : listening ? $"Listening on {port}" : "Stopped");
-        trayIcon.Text = $"KrisKVM — {statusText}";
+        trayIcon.Text = $"SkeletonKey: {statusText}";
         statusMenuItem.Text = statusText;
 
         settingsForm.UpdateStatus(listening, port, connected, capturing, error);

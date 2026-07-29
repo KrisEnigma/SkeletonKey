@@ -5,3 +5,5 @@ build/
 
 windows-injector/bin/
 windows-injector/obj/
+windows-injector/publish/
+.fuse_hidden*

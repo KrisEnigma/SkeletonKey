@@ -5,13 +5,13 @@ using System.Windows.Forms;
 namespace WindowsInjector;
 
 /// <summary>
-/// The small status/settings window — KrisKVM's counterpart to the Mac
+/// The small status/settings window, SkeletonKey's counterpart to the Mac
 /// app's control panel. Shows connection/capture state and lets you change
 /// the listening port. Closing it just hides it; the tray icon and listener
 /// keep running until "Quit" is chosen, same as the Mac app's window.
 ///
 /// Laid out with FlowLayoutPanel rows that auto-size to their own content,
-/// rather than hand-placed pixel coordinates — that's what caused the
+/// rather than hand-placed pixel coordinates. That's what caused the
 /// clipped subtitle text before (a guessed Y offset didn't leave enough
 /// room for the actual font metrics).
 /// </summary>
@@ -29,21 +29,21 @@ internal sealed class SettingsForm : Form
         this.listener = listener;
 
         AutoScaleMode = AutoScaleMode.Dpi;
-        Text = "KrisKVM";
+        Text = "SkeletonKey";
         FormBorderStyle = FormBorderStyle.FixedDialog;
         MaximizeBox = false;
         MinimizeBox = true;
         StartPosition = FormStartPosition.CenterScreen;
         ShowInTaskbar = false;
         // Size to whatever the content actually needs instead of a guessed
-        // fixed size — that guess was wrong last time and clipped the Quit
+        // fixed size. That guess was wrong last time and clipped the Quit
         // button off the bottom of the window.
         AutoSize = true;
         AutoSizeMode = AutoSizeMode.GrowAndShrink;
 
         var titleLabel = new Label
         {
-            Text = "KrisKVM",
+            Text = "SkeletonKey",
             Font = new Font(Font.FontFamily, 20, FontStyle.Bold),
             AutoSize = true,
             Margin = new Padding(0, 0, 0, 6)

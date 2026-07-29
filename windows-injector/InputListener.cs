@@ -8,7 +8,7 @@ using System.Text;
 namespace WindowsInjector;
 
 /// <summary>
-/// Listens for KrisKVM's line-based protocol and injects the corresponding
+/// Listens for SkeletonKey's line-based protocol and injects the corresponding
 /// mouse/keyboard input via SendInput. Runs its accept loop on a background
 /// thread and raises events so the tray UI can reflect connection state.
 /// </summary>
@@ -88,7 +88,7 @@ internal sealed class InputListener
         }
         catch
         {
-            // Listener may already be stopped/disposed — fine to ignore.
+            // Listener may already be stopped/disposed, fine to ignore.
         }
         tcpListener = null;
     }
