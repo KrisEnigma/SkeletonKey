@@ -1,36 +1,71 @@
 using System.Drawing;
 using System.Drawing.Drawing2D;
 using System.Runtime.InteropServices;
+using System.Windows.Forms;
 
 namespace WindowsInjector;
 
 /// <summary>
-/// Generates the small colored-dot tray icons (red/orange/green, mirroring
-/// the Mac app's status pill) at runtime instead of shipping icon assets.
+/// App brand icon, tray icons with a colored semaphore badge, and the small
+/// status dots used in the settings window (red/orange/green).
 /// </summary>
 internal static class TrayIcons
 {
     [DllImport("user32.dll")]
     private static extern bool DestroyIcon(IntPtr handle);
 
+    private static Icon? cachedAppIcon;
+    private static Bitmap? cachedBrandBitmap;
+
+    public static Icon AppIcon
+    {
+        get
+        {
+            if (cachedAppIcon != null)
+            {
+                return cachedAppIcon;
+            }
+
+            // Comes from <ApplicationIcon> in the csproj once published /
+            // run; falls back to a generated brand-colored mark if missing
+            // (e.g. odd launch contexts during development).
+            cachedAppIcon = Icon.ExtractAssociatedIcon(Application.ExecutablePath)
+                ?? CreateDot(Color.FromArgb(0x7B, 0x5C, 0xBF));
+            return cachedAppIcon;
+        }
+    }
+
+    /// <summary>
+    /// Brand mark with a corner semaphore (red / orange / green) so tray
+    /// status stays glanceable without dropping the app icon.
+    /// </summary>
+    public static Icon CreateBadged(Color badgeColor)
+    {
+        using var bitmap = new Bitmap(32, 32);
+        using (var graphics = Graphics.FromImage(bitmap))
+        {
+            graphics.SmoothingMode = SmoothingMode.AntiAlias;
+            graphics.InterpolationMode = InterpolationMode.HighQualityBicubic;
+            graphics.Clear(Color.Transparent);
+            // Brand bitmap is already tightly cropped; draw edge-to-edge.
+            graphics.DrawImage(BrandBitmap(), 0, 0, 32, 32);
+
+            const int badgeSize = 8;
+            // Bottom-left (GDI origin is top-left).
+            var badgeRect = new Rectangle(0, 32 - badgeSize, badgeSize, badgeSize);
+            using var outline = new SolidBrush(Color.FromArgb(180, 0, 0, 0));
+            graphics.FillEllipse(outline, Rectangle.Inflate(badgeRect, 1, 1));
+            using var badge = new SolidBrush(badgeColor);
+            graphics.FillEllipse(badge, badgeRect);
+        }
+
+        return IconFromBitmap(bitmap);
+    }
+
     public static Icon CreateDot(Color color)
     {
         using var bitmap = CreateDotBitmap(color, 32);
-
-        // Bitmap.GetHicon() hands back a raw GDI handle that isn't owned by
-        // any managed object, so it'd leak if left alone. Icon.Clone() makes
-        // an independent copy the Icon class does manage, then we can safely
-        // destroy the original handle.
-        var handle = bitmap.GetHicon();
-        try
-        {
-            using var handleIcon = Icon.FromHandle(handle);
-            return (Icon)handleIcon.Clone();
-        }
-        finally
-        {
-            DestroyIcon(handle);
-        }
+        return IconFromBitmap(bitmap);
     }
 
     /// <summary>
@@ -47,5 +82,35 @@ internal static class TrayIcons
         var inset = (int)(size * 0.125);
         graphics.FillEllipse(brush, inset, inset, size - inset * 2, size - inset * 2);
         return bitmap;
+    }
+
+    private static Bitmap BrandBitmap()
+    {
+        if (cachedBrandBitmap != null)
+        {
+            return cachedBrandBitmap;
+        }
+
+        using var icon = AppIcon;
+        cachedBrandBitmap = icon.ToBitmap();
+        return cachedBrandBitmap;
+    }
+
+    private static Icon IconFromBitmap(Bitmap bitmap)
+    {
+        // Bitmap.GetHicon() hands back a raw GDI handle that isn't owned by
+        // any managed object, so it'd leak if left alone. Icon.Clone() makes
+        // an independent copy the Icon class does manage, then we can safely
+        // destroy the original handle.
+        var handle = bitmap.GetHicon();
+        try
+        {
+            using var handleIcon = Icon.FromHandle(handle);
+            return (Icon)handleIcon.Clone();
+        }
+        finally
+        {
+            DestroyIcon(handle);
+        }
     }
 }

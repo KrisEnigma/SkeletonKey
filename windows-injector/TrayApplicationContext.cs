@@ -35,7 +35,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
 
         trayIcon = new NotifyIcon
         {
-            Icon = TrayIcons.CreateDot(Color.Red),
+            Icon = TrayIcons.CreateBadged(Color.Red),
             Text = "SkeletonKey",
             Visible = true,
             ContextMenuStrip = menu
@@ -69,14 +69,15 @@ internal sealed class TrayApplicationContext : ApplicationContext
 
     private void UpdateState(bool listening, bool connected, bool capturing, int port, string? error = null)
     {
-        // Same three-tier scheme as the Mac app: red when nothing useful is
-        // happening, orange when idle/waiting (listening with no client, or
-        // connected but not actively forwarding), green only while the Mac
-        // is actually capturing and driving this PC.
+        // Brand icon + semaphore badge: red when stopped/error, orange when
+        // idle/waiting, green only while the Mac is actively capturing.
         var color = !listening ? Color.Red : capturing ? Color.LimeGreen : Color.Orange;
         var oldIcon = trayIcon.Icon;
-        trayIcon.Icon = TrayIcons.CreateDot(color);
-        oldIcon?.Dispose();
+        trayIcon.Icon = TrayIcons.CreateBadged(color);
+        if (!ReferenceEquals(oldIcon, TrayIcons.AppIcon))
+        {
+            oldIcon?.Dispose();
+        }
 
         var statusText = error
             ?? (capturing ? "Capturing" : connected ? "Connected (idle)" : listening ? $"Listening on {port}" : "Stopped");

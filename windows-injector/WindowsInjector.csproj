@@ -6,5 +6,10 @@
     <RollForward>LatestMajor</RollForward>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
+    <AssemblyName>SkeletonKey</AssemblyName>
+    <Product>SkeletonKey</Product>
+    <AssemblyTitle>SkeletonKey</AssemblyTitle>
+    <RootNamespace>WindowsInjector</RootNamespace>
+    <ApplicationIcon>..\assets\SkeletonKey.ico</ApplicationIcon>
   </PropertyGroup>
 </Project>

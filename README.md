@@ -39,7 +39,7 @@ console needed to actually run it afterwards):
 ```powershell
 powershell -ExecutionPolicy Bypass -File build-windows-app.ps1
 ```
-This produces `windows-injector\publish\WindowsInjector.exe`. From then on,
+This produces `windows-injector\publish\SkeletonKey.exe`. From then on,
 just double-click it, or make a shortcut on the Desktop, or in
 `shell:startup` (Win+R, then `shell:startup`) to have it launch
 automatically whenever you log in. Re-run the script any time you change
@@ -60,7 +60,7 @@ to reopen it or quit.
 To change the port: open the window, edit the **Port** field, click
 **Apply**. This restarts the listener and remembers the new port for next
 launch (stored in `%AppData%\SkeletonKey\settings.json`). Passing a port as
-a command line argument (`WindowsInjector.exe 12653`) works too, as a
+a command line argument (`SkeletonKey.exe 12653`) works too, as a
 one-time override for that launch.
 
 ### 3. Start the Mac side
@@ -72,7 +72,11 @@ open build/SkeletonKey.app
 A small window opens showing an endpoint field (defaulting to
 `192.168.0.100:12653`, edit it to your Windows PC's actual local IP and
 port, or pick a previously-used one from the dropdown) and an Apply button.
-The app connects to that endpoint automatically in the background and shows
+The app lives in the menu bar; the Dock icon appears only while the
+control window is open. Closing the window hides the Dock icon again but
+leaves the app running. Double-click the menu bar icon to reopen the
+window, or single-click / right-click for the status menu. The app
+connects to the endpoint automatically in the background and shows
 "Connected" once it's up. This connection is independent of forwarding, so
 it stays alive whether or not you're actively controlling the PC.
 
@@ -137,7 +141,12 @@ networks):
 
 - The Mac only initiates outbound TCP connections; the Windows side never
   connects out anywhere.
-- The Mac build is ad-hoc code-signed with a fixed identifier so
-  Accessibility and Input Monitoring grants survive rebuilds instead of
-  needing to be re-added every time (unsigned executables get tracked by
-  raw content hash, which changes on every recompile).
+- The Mac build signs with a local `SkeletonKey Dev` certificate (created
+  once into `~/Library/Keychains/skeletonkey.keychain-db`) so Accessibility
+  and Input Monitoring grants survive rebuilds. Ad-hoc signing is not enough
+  — macOS pins those grants to a per-build cdhash unless a real cert anchors
+  the designated requirement. After the first signed build, grant both
+  permissions once; later rebuilds should keep them.
+- App icons live under `assets/` (`icon-1024.png` master, plus generated
+  transparent `icon-mark-1024.png`, `AppIcon.icns`, and `SkeletonKey.ico`).
+  Regenerate with `sh scripts/generate-icons.sh` after changing the master.

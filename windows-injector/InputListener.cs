@@ -32,6 +32,10 @@ internal sealed class InputListener
     private readonly object gate = new();
     private TcpListener? tcpListener;
     private CancellationTokenSource? cts;
+    // Only inject while the Mac has explicitly said capture is on. The TCP
+    // link itself stays up in the background; connection alone must never
+    // move this PC's mouse.
+    private volatile bool capturing;
 
     public int Port { get; private set; }
 
@@ -113,6 +117,7 @@ internal sealed class InputListener
                 // avoids delayed-ACK/Nagle interaction stalls that showed up
                 // as choppy mouse movement.
                 client.NoDelay = true;
+                capturing = false;
                 ClientConnected?.Invoke();
                 StatusMessage?.Invoke("Client connected");
 
@@ -126,6 +131,7 @@ internal sealed class InputListener
                 }
                 finally
                 {
+                    capturing = false;
                     ClientDisconnected?.Invoke();
                     StatusMessage?.Invoke("Client disconnected");
                 }
@@ -167,23 +173,29 @@ internal sealed class InputListener
         {
             switch (parts[0])
             {
+                case "capturing" when parts.Length >= 2:
+                    capturing = parts[1].Equals("on", StringComparison.OrdinalIgnoreCase);
+                    CapturingChanged?.Invoke(capturing);
+                    break;
                 case "move" when parts.Length >= 3:
+                    if (!capturing) break;
                     InjectMouseMove(ParseInt(parts[1]), ParseInt(parts[2]));
                     break;
                 case "button" when parts.Length >= 3:
+                    if (!capturing) break;
                     InjectMouseButton(ParseInt(parts[1]), parts[2].Equals("down", StringComparison.OrdinalIgnoreCase));
                     break;
                 case "scroll" when parts.Length >= 3:
+                    if (!capturing) break;
                     InjectMouseScroll(ParseInt(parts[1]), ParseInt(parts[2]));
                     break;
                 case "text" when parts.Length >= 3:
+                    if (!capturing) break;
                     InjectUnicodeText(parts[1], parts[2].Equals("down", StringComparison.OrdinalIgnoreCase));
                     break;
                 case "vk" when parts.Length >= 3:
+                    if (!capturing) break;
                     InjectVirtualKey(ParseUInt16(parts[1]), parts[2].Equals("down", StringComparison.OrdinalIgnoreCase));
-                    break;
-                case "capturing" when parts.Length >= 2:
-                    CapturingChanged?.Invoke(parts[1].Equals("on", StringComparison.OrdinalIgnoreCase));
                     break;
                 case "heartbeat":
                     break;

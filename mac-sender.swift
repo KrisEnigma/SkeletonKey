@@ -136,13 +136,24 @@ private final class StatusBarController {
     private let showWindowItem = NSMenuItem(title: "Show Window", action: nil, keyEquivalent: "")
     private let showWindowTarget = ActionTarget()
     private let quitTarget = ActionTarget()
+    private let clickTarget = ClickTarget()
+    private var pendingSingleClick: DispatchWorkItem?
 
     init() {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         if let button = statusItem.button {
-            button.image = Self.statusImage(color: .systemRed)
+            button.image = Self.menuBarImage(badgeColor: .systemRed)
             button.imagePosition = .imageOnly
-            button.toolTip = "SkeletonKey"
+            button.toolTip = "SkeletonKey — double-click to open"
+            // Don't assign statusItem.menu permanently: that eats clicks and
+            // makes double-click impossible. Route clicks ourselves so a
+            // double-click can reopen the window (same as the Windows tray).
+            clickTarget.onClick = { [weak self] event in
+                self?.handleButtonEvent(event)
+            }
+            button.target = clickTarget
+            button.action = #selector(ClickTarget.invoke(_:))
+            button.sendAction(on: [.leftMouseUp, .rightMouseUp])
         }
 
         stateItem.isEnabled = false
@@ -156,7 +167,6 @@ private final class StatusBarController {
         let quitItem = NSMenuItem(title: "Quit", action: #selector(ActionTarget.invoke), keyEquivalent: "q")
         quitItem.target = quitTarget
         menu.addItem(quitItem)
-        statusItem.menu = menu
     }
 
     func setShowWindowAction(_ action: @escaping () -> Void) {
@@ -180,16 +190,93 @@ private final class StatusBarController {
                 self.connectionItem.title = "Connection: Connected"
             }
 
+            // Brand mark + semaphore badge: red idle, orange armed/waiting,
+            // green actively capturing.
             let color: NSColor
             if remoteActive {
                 color = connectionState == .connected ? .systemGreen : .systemOrange
             } else {
                 color = .systemRed
             }
-
-            self.statusItem.button?.image = Self.statusImage(color: color)
-            self.statusItem.button?.toolTip = remoteActive ? "SkeletonKey: active" : "SkeletonKey: inactive"
+            self.statusItem.button?.image = Self.menuBarImage(badgeColor: color)
+            self.statusItem.button?.toolTip = remoteActive
+                ? "SkeletonKey: active — double-click to open"
+                : "SkeletonKey: inactive — double-click to open"
         }
+    }
+
+    private func handleButtonEvent(_ event: NSEvent) {
+        if event.type == .rightMouseUp {
+            pendingSingleClick?.cancel()
+            pendingSingleClick = nil
+            popUpMenu()
+            return
+        }
+
+        guard event.type == .leftMouseUp else { return }
+
+        if event.clickCount >= 2 {
+            pendingSingleClick?.cancel()
+            pendingSingleClick = nil
+            showWindowTarget.action?()
+            return
+        }
+
+        // Delay the menu so a second click can still count as a double-click
+        // instead of opening the menu under the cursor.
+        pendingSingleClick?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            self?.popUpMenu()
+        }
+        pendingSingleClick = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.22, execute: work)
+    }
+
+    private func popUpMenu() {
+        guard let button = statusItem.button else { return }
+        menu.popUp(positioning: nil, at: NSPoint(x: 0, y: button.bounds.height), in: button)
+    }
+
+    /// Brand icon with a small colored semaphore so status stays glanceable.
+    private static func menuBarImage(badgeColor: NSColor) -> NSImage {
+        let menuSize = NSSize(width: 18, height: 18)
+        let image = NSImage(size: menuSize)
+        image.lockFocus()
+
+        let brand = brandSourceImage()
+        brand.draw(
+            in: NSRect(origin: .zero, size: menuSize),
+            from: NSRect(origin: .zero, size: brand.size),
+            operation: .sourceOver,
+            fraction: 1.0
+        )
+
+        // Bottom-left semaphore (AppKit y=0 is the bottom edge).
+        let badgeSide: CGFloat = 4.5
+        let badgeRect = NSRect(x: 0, y: 0, width: badgeSide, height: badgeSide)
+        NSColor.black.withAlphaComponent(0.65).setFill()
+        NSBezierPath(ovalIn: badgeRect.insetBy(dx: -0.6, dy: -0.6)).fill()
+        badgeColor.setFill()
+        NSBezierPath(ovalIn: badgeRect).fill()
+
+        image.unlockFocus()
+        image.isTemplate = false
+        return image
+    }
+
+    private static func brandSourceImage() -> NSImage {
+        // Tight crop without the master artwork's empty black padding — the
+        // full AppIcon.icns keeps that padding for Dock, but menu-bar size
+        // needs the mark filling the pixel budget.
+        if let url = Bundle.main.url(forResource: "MenuBarIcon", withExtension: "png"),
+           let image = NSImage(contentsOf: url) {
+            return image
+        }
+        if let url = Bundle.main.url(forResource: "AppIcon", withExtension: "icns"),
+           let image = NSImage(contentsOf: url) {
+            return image
+        }
+        return statusImage(color: .systemPurple)
     }
 
     private static func statusImage(color: NSColor) -> NSImage {
@@ -218,9 +305,17 @@ private final class StatusBarController {
         }
     }
 
+    private final class ClickTarget: NSObject {
+        var onClick: ((NSEvent) -> Void)?
+
+        @objc func invoke(_ sender: Any?) {
+            guard let event = NSApp.currentEvent else { return }
+            onClick?(event)
+        }
+    }
 }
 
-private final class ControlWindowController: NSWindowController, NSComboBoxDelegate {
+private final class ControlWindowController: NSWindowController, NSWindowDelegate, NSComboBoxDelegate {
     private let addressField = NSComboBox()
     private let statusDotView = NSImageView()
     private let statusTextField = NSTextField(labelWithString: "Off")
@@ -233,6 +328,9 @@ private final class ControlWindowController: NSWindowController, NSComboBoxDeleg
     private let quitTarget = ActionTarget()
     private var historyEntries: [HistoryEntry] = []
     private var historySelectAction: ((String, UInt16) -> Void)?
+    /// When false, closing the window won't demote us to `.accessory`
+    /// (capture needs that demotion not to yank CGAssociate out from under us).
+    var canDemoteToAccessory: (() -> Bool)?
 
     init() {
         let window = NSWindow(
@@ -249,6 +347,7 @@ private final class ControlWindowController: NSWindowController, NSComboBoxDeleg
         window.center()
 
         super.init(window: window)
+        window.delegate = self
         buildContent()
     }
 
@@ -328,9 +427,24 @@ private final class ControlWindowController: NSWindowController, NSComboBoxDeleg
     }
 
     override func showWindow(_ sender: Any?) {
+        // Dock icon while the window is up; menu-bar-only once it's closed.
+        NSApp.setActivationPolicy(.regular)
         super.showWindow(sender)
         window?.makeKeyAndOrderFront(sender)
         NSApp.activate(ignoringOtherApps: true)
+    }
+
+    func windowWillClose(_ notification: Notification) {
+        // Defer so AppKit can finish tearing down the window before we drop
+        // back to accessory (otherwise the policy swap can glitch the close).
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            guard self.canDemoteToAccessory?() ?? true else {
+                appLog("Keeping .regular while capturing with window closed")
+                return
+            }
+            NSApp.setActivationPolicy(.accessory)
+        }
     }
 
     private func buildContent() {
@@ -681,10 +795,22 @@ private final class ConnectionManager {
 private final class MouseEventRouter {
     private let state: SharedState
     private let connection: ConnectionManager
+    /// Quartz-space point we warp back to while capturing, so the Mac cursor
+    /// can't drift even if CGAssociate is ignored (common when the control
+    /// window is closed and we're only a menu-bar agent).
+    private var cursorPin: CGPoint?
 
     init(state: SharedState, connection: ConnectionManager) {
         self.state = state
         self.connection = connection
+    }
+
+    func pinCursorToCurrentPosition() {
+        cursorPin = CGEvent(source: nil)?.location
+    }
+
+    func clearCursorPin() {
+        cursorPin = nil
     }
 
     /// Forwards the event to the remote host once actually connected, and
@@ -701,6 +827,9 @@ private final class MouseEventRouter {
             let dx = event.getIntegerValueField(.mouseEventDeltaX)
             let dy = event.getIntegerValueField(.mouseEventDeltaY)
             connection.send("move \(dx) \(dy)")
+            if let pin = cursorPin {
+                CGWarpMouseCursorPosition(pin)
+            }
         case .leftMouseDown, .leftMouseUp, .rightMouseDown, .rightMouseUp, .otherMouseDown, .otherMouseUp:
             let buttonNumber = event.getIntegerValueField(.mouseEventButtonNumber)
             let direction = (type == .leftMouseDown || type == .rightMouseDown || type == .otherMouseDown) ? "down" : "up"
@@ -1232,7 +1361,9 @@ final class SkeletonKeyAppDelegate: NSObject, NSApplicationDelegate {
     private var isCapturing = false
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        NSApp.setActivationPolicy(.regular)
+        // Menu-bar agent: stay out of the Dock. The status item is the
+        // persistent home; the control window is summoned on demand.
+        NSApp.setActivationPolicy(.accessory)
         installMainMenu()
 
         let saved = SavedEndpoint.load(defaultHost: host, defaultPort: port)
@@ -1262,9 +1393,22 @@ final class SkeletonKeyAppDelegate: NSObject, NSApplicationDelegate {
         connectionManager.onStateChange = { [weak self] connectionState in
             guard let self else { return }
             self.state.setConnectionState(connectionState)
+
+            // A dropped / retrying link must not leave capture "armed".
+            // Otherwise the next successful reconnect instantly takes over
+            // the mouse without another hotkey press — exactly the wrong
+            // feeling when the PC boots and the Mac was already waiting.
+            if connectionState != .connected && self.state.isRemoteActive() {
+                self.state.setRemoteActive(false)
+                appLog("remoteActive=false (cleared on disconnect)")
+            }
+
             self.refreshCaptureState()
-            self.statusController.update(remoteActive: self.state.isRemoteActive(), connectionState: connectionState)
-            self.controlWindow.updateStatus(remoteActive: self.state.isRemoteActive(), connectionState: connectionState)
+            let remoteActive = self.state.isRemoteActive()
+            self.statusController.update(remoteActive: remoteActive, connectionState: connectionState)
+            DispatchQueue.main.async {
+                self.controlWindow.updateStatus(remoteActive: remoteActive, connectionState: connectionState)
+            }
         }
         connectionManager.ensureConnected()
 
@@ -1290,6 +1434,9 @@ final class SkeletonKeyAppDelegate: NSObject, NSApplicationDelegate {
         controlWindow.setEndpoint(host: host, port: port)
         controlWindow.updateStatus(remoteActive: false, connectionState: .disconnected)
         controlWindow.updateHistory(SavedEndpoint.loadHistory())
+        controlWindow.canDemoteToAccessory = { [weak self] in
+            !(self?.isCapturing ?? false)
+        }
 
         requestAccessibilityAccess()
         requestInputMonitoringAccess()
@@ -1315,19 +1462,27 @@ final class SkeletonKeyAppDelegate: NSObject, NSApplicationDelegate {
         eventTapRetryTimer?.invalidate()
         connectionManager.disconnect()
         hotKeys.unregister()
-        // Safety net: never leave the Mac's own cursor disassociated if we quit
-        // (or crash) while forwarding was active.
+        // Safety net: never leave the Mac's own cursor disassociated / hidden
+        // if we quit while forwarding was active.
         CGAssociateMouseAndMouseCursorPosition(1)
+        if isCapturing {
+            CGDisplayShowCursor(kCGNullDirectDisplay)
+        }
     }
 
     @objc private func toggleRemoteMode() {
         // Pure capture on/off, it never itself starts or retries the
-        // connection. The connection already runs on its own in the
-        // background; this just decides whether we act on it. If we're not
-        // actually connected yet, refreshCaptureState() below will simply
-        // leave capture off (and re-evaluate automatically the moment the
-        // connection comes up), rather than immediately grabbing the cursor.
-        let newValue = !state.isRemoteActive()
+        // connection. Starting capture is only allowed while actually
+        // connected — arming-while-disconnected used to auto-grab the
+        // mouse the instant the PC came back, which felt broken.
+        let currentlyActive = state.isRemoteActive()
+        if currentlyActive == false && state.connectionStateValue() != .connected {
+            appLog("toggle ignored: not connected")
+            NSSound(named: "Tink")?.play()
+            return
+        }
+
+        let newValue = !currentlyActive
         state.setRemoteActive(newValue)
         refreshCaptureState()
 
@@ -1340,31 +1495,51 @@ final class SkeletonKeyAppDelegate: NSObject, NSApplicationDelegate {
     /// based on whether we're genuinely connected right now, not just whether
     /// the user asked to forward. Called both when the user toggles and
     /// whenever the connection state itself changes, so a drop mid-session
-    /// hands control straight back to the Mac until it reconnects.
+    /// hands control straight back to the Mac.
     private func refreshCaptureState() {
-        let capturing = state.isCapturing()
-        guard capturing != isCapturing else { return }
-        isCapturing = capturing
+        let apply = { [weak self] in
+            guard let self else { return }
+            let capturing = self.state.isCapturing()
+            guard capturing != self.isCapturing else { return }
+            self.isCapturing = capturing
 
-        if capturing {
-            // CGAssociateMouseAndMouseCursorPosition only reliably takes
-            // effect while the calling app is the active/foreground app.
-            // Triggering capture via the *global* hotkey happens while some
-            // other app is frontmost, so without this, the call below would
-            // silently do nothing and the Mac's cursor would keep moving.
-            NSApp.activate(ignoringOtherApps: true)
+            if capturing {
+                // Hotkey often fires while another app is frontmost and our
+                // control window is closed (.accessory). CGAssociate silently
+                // no-ops unless we're active — activate without reordering
+                // the closed window front (no Dock/window jump). Pin+warp is
+                // the backup so the Mac cursor still can't drift.
+                if NSApp.activationPolicy() != .regular {
+                    NSApp.setActivationPolicy(.regular)
+                }
+                NSApp.activate(ignoringOtherApps: true)
+                CGAssociateMouseAndMouseCursorPosition(0)
+                CGDisplayHideCursor(kCGNullDirectDisplay)
+                self.mouseRouter.pinCursorToCurrentPosition()
+            } else {
+                self.mouseRouter.clearCursorPin()
+                CGAssociateMouseAndMouseCursorPosition(1)
+                CGDisplayShowCursor(kCGNullDirectDisplay)
+                self.keyboardRouter.releaseAllHeldModifiers()
+                // Window still closed → back to menu-bar-only.
+                if self.controlWindow.window?.isVisible != true {
+                    NSApp.setActivationPolicy(.accessory)
+                }
+            }
+
+            // The TCP connection itself is a persistent background service
+            // that stays up regardless of the hotkey, so Windows can't
+            // infer capture state from socket connect/disconnect alone —
+            // tell it explicitly.
+            self.connectionManager.send("capturing \(capturing ? "on" : "off")")
+            appLog("capturing=\(capturing)")
         }
 
-        CGAssociateMouseAndMouseCursorPosition(capturing ? 0 : 1)
-        if !capturing {
-            keyboardRouter.releaseAllHeldModifiers()
+        if Thread.isMainThread {
+            apply()
+        } else {
+            DispatchQueue.main.async(execute: apply)
         }
-
-        // The TCP connection itself is a persistent background service that
-        // stays up regardless of the hotkey, so Windows can't infer capture
-        // state from socket connect/disconnect alone, tell it explicitly.
-        connectionManager.send("capturing \(capturing ? "on" : "off")")
-        appLog("capturing=\(capturing)")
     }
 
     /// The app never had a standard application menu, so Cmd+Q had nothing

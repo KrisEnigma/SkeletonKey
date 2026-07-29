@@ -23,7 +23,7 @@ dotnet publish $projectPath `
   -o $outputPath
 
 Write-Host ""
-Write-Host "Published: $outputPath\WindowsInjector.exe"
+Write-Host "Published: $outputPath\SkeletonKey.exe"
 Write-Host "Double-click it directly from now on - no dotnet/console needed."
 Write-Host "Tip: right-click it -> Send to -> Desktop (create shortcut), or"
 Write-Host "drop a shortcut in shell:startup to have it launch automatically"

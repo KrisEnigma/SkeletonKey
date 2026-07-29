@@ -30,6 +30,7 @@ internal sealed class SettingsForm : Form
 
         AutoScaleMode = AutoScaleMode.Dpi;
         Text = "SkeletonKey";
+        Icon = TrayIcons.AppIcon;
         FormBorderStyle = FormBorderStyle.FixedDialog;
         MaximizeBox = false;
         MinimizeBox = true;
