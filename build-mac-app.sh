@@ -1,29 +1,23 @@
 #!/bin/sh
 set -eu
 
-launcher_name="KrisKVM"
-cli_name="mac-sender"
+app_name="KrisKVM"
 build_root="build"
-bundle_path="$build_root/$launcher_name.app"
+bundle_path="$build_root/$app_name.app"
 contents_path="$bundle_path/Contents"
 macos_path="$contents_path/MacOS"
 resources_path="$contents_path/Resources"
 plist_path="$contents_path/Info.plist"
-launcher_executable_path="$macos_path/$launcher_name"
-cli_executable_path="$build_root/$cli_name"
+executable_path="$macos_path/$app_name"
 
 rm -rf "$bundle_path"
 mkdir -p "$macos_path" "$resources_path"
 
-swiftc cli-main.swift mac-sender.swift -o "$cli_executable_path" \
+swiftc main.swift mac-sender.swift -o "$executable_path" \
   -framework AppKit \
   -framework Carbon \
   -framework CoreGraphics \
   -framework Network
-
-swiftc launcher-main.swift -o "$launcher_executable_path" \
-  -framework AppKit \
-  -framework Foundation
 
 cat > "$plist_path" <<'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>
@@ -35,7 +29,7 @@ cat > "$plist_path" <<'PLIST'
   <key>CFBundleExecutable</key>
   <string>KrisKVM</string>
   <key>CFBundleIdentifier</key>
-  <string>com.krisenigma.kriskvmlauncher</string>
+  <string>com.krisenigma.kriskvm</string>
   <key>CFBundleInfoDictionaryVersion</key>
   <string>6.0</string>
   <key>CFBundleName</key>
@@ -48,10 +42,19 @@ cat > "$plist_path" <<'PLIST'
   <string>0.1.0</string>
   <key>CFBundleVersion</key>
   <string>1</string>
-  <key>LSUIElement</key>
-  <true/>
+  <key>NSLocalNetworkUsageDescription</key>
+  <string>KrisKVM connects to a listener on your Windows PC over your local network to forward mouse input.</string>
 </dict>
 </plist>
 PLIST
+
+# The binary was completely unsigned before this. macOS's TCC (Accessibility /
+# Input Monitoring) grants tie themselves to a stable code identity when one
+# exists, but fall back to hashing the raw executable when it doesn't — so
+# every rebuild produced a different hash and looked like a brand-new,
+# untrusted app, forcing you to re-grant permissions each time. Ad-hoc signing
+# with a fixed --identifier gives TCC something stable to key the grant to
+# instead, so a rebuild should no longer invalidate the existing grant.
+codesign --force --deep --sign - --identifier "com.krisenigma.kriskvm" "$bundle_path"
 
 echo "Built $bundle_path"
