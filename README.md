@@ -128,6 +128,7 @@ When the Mac cannot reach the PC directly:
 
 ## Known limitations
 
+- Clipboard is not shared. Copy/paste does not cross between the Mac and the PC.
 - Option/Alt is not treated as a shortcut modifier, so Alt+F will not open a
   Windows menu. On many Mac layouts Option is needed for ordinary characters.
 - Media and system keys (brightness, volume, Mission Control, Dictation,
