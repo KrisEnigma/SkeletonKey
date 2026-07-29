@@ -4,24 +4,24 @@
 
 # SkeletonKey
 
-Outbound-only Mac → Windows remote input. Drive your PC's mouse and keyboard
-from your Mac over the local network (or the internet via ngrok), toggled
-with a global hotkey.
+Outbound-only Mac-to-Windows remote input. Control your PC mouse and keyboard
+from your Mac over the local network (or over the internet with ngrok),
+toggled with a global hotkey.
 
 ## Why this exists
 
-Most remote-desktop / KVM tools (TeamViewer, AnyDesk, Chrome Remote Desktop,
-VNC, [Deskflow](https://github.com/deskflow/deskflow), etc.) install a
-background *server* on the machine you control. That usually means admin
-rights, a firewall exception, and sometimes an account. On a locked-down
-enterprise PC, IT often blocks that outright — overkill when you just want
-to share a keyboard and mouse between two machines on your desk.
+Most remote-desktop and KVM tools (TeamViewer, AnyDesk, Chrome Remote
+Desktop, VNC, [Deskflow](https://github.com/deskflow/deskflow), etc.) install
+a background server on the machine you want to control. That usually means
+admin rights, a firewall exception, and sometimes an account. On a
+locked-down work PC, IT often blocks that, which is a lot of friction just to
+share a keyboard and mouse between two machines on your desk.
 
-SkeletonKey flips the model. The Windows side is a small self-contained
-`.exe` you run — no installer, no admin, no service, no account. It listens
-on one TCP port and injects input locally. The Mac opens the outbound
-connection. Nothing is exposed to the internet unless you tunnel it (e.g.
-ngrok), and there's no third-party relay. One key, any door.
+SkeletonKey works the other way around. The Windows side is a small
+self-contained `.exe` you run: no installer, no admin, no service, no
+account. It listens on one TCP port and injects input locally. The Mac opens
+the outbound connection. Nothing hits the internet unless you tunnel it
+yourself (for example with ngrok), and there is no third-party relay.
 
 ## How to use it
 
@@ -31,20 +31,20 @@ ngrok), and there's no third-party relay. One key, any door.
 ```bash
 sh build-mac-app.sh
 ```
-Produces `build/SkeletonKey.app`, signed with a local `SkeletonKey Dev`
-certificate so Accessibility / Input Monitoring grants survive rebuilds.
+Builds `build/SkeletonKey.app`, signed with a local `SkeletonKey Dev`
+certificate so Accessibility and Input Monitoring grants survive rebuilds.
 
-**Windows** (standalone `.exe`, no runtime or console needed afterward):
+**Windows** (standalone `.exe`; no .NET runtime or console needed afterward):
 ```powershell
 powershell -ExecutionPolicy Bypass -File build-windows-app.ps1
 ```
-Produces `windows-injector\publish\SkeletonKey.exe`. Double-click it, put a
-shortcut on the Desktop, or drop one in `shell:startup` (Win+R →
+Builds `windows-injector\publish\SkeletonKey.exe`. Double-click it, put a
+shortcut on the Desktop, or drop one in `shell:startup` (Win+R, then
 `shell:startup`) to launch at login. Re-run the script after changing
 Windows code.
 
-During development, `dotnet run --project .\windows-injector` is faster but
-needs a terminal each time.
+For day-to-day development, `dotnet run --project .\windows-injector` is
+faster but needs a terminal each time.
 
 ### 2. Start the Windows side
 
@@ -53,14 +53,14 @@ It listens on port `12653` by default.
 
 | Color | Meaning |
 | --- | --- |
-| Orange | Listening (or connected but idle) |
-| Green | Capturing — Mac is actively forwarding |
-| Red | Stopped / error |
+| Orange | Listening, or connected but idle |
+| Green | Capturing (Mac is actively forwarding) |
+| Red | Stopped or error |
 
-Closing the window hides it to the tray; use the tray menu to reopen or quit.
+Closing the window hides it to the tray. Use the tray menu to reopen or quit.
 
 To change the port: edit **Port**, click **Apply**. The new port is saved in
-`%AppData%\SkeletonKey\settings.json`. A one-shot override also works:
+`%AppData%\SkeletonKey\settings.json`. You can also pass a one-shot override:
 `SkeletonKey.exe 12653`.
 
 ### 3. Start the Mac side
@@ -69,82 +69,80 @@ To change the port: edit **Port**, click **Apply**. The new port is saved in
 open build/SkeletonKey.app
 ```
 
-SkeletonKey lives in the **menu bar**. The Dock icon appears only while the
-control window is open. Double-click the menu bar icon to reopen the window;
+The app lives in the menu bar. The Dock icon only shows while the control
+window is open. Double-click the menu bar icon to reopen the window;
 single-click or right-click for the status menu.
 
-**First launch — permissions.** Grant **Accessibility** and **Input
-Monitoring** to `SkeletonKey.app`. Input Monitoring does *not* show a
-system alert: if keyboard forwarding fails, check
-System Settings → Privacy & Security → Input Monitoring and enable it, then
-relaunch.
+**Permissions (first launch).** Grant Accessibility and Input Monitoring to
+`SkeletonKey.app`. Input Monitoring does not show a system alert. If
+keyboard forwarding fails, check System Settings > Privacy & Security >
+Input Monitoring, enable it, then relaunch.
 
 ### 4. Connect and take control
 
 In the control window:
 
-1. Set the **Endpoint** to your PC's `host:port` (default
+1. Set **Endpoint** to your PC's `host:port` (default
    `192.168.0.100:12653`), or pick a recent one from the dropdown.
-2. Optionally **lock** the endpoint so it can't be edited by accident.
-3. Click **Start Forwarding** (or press the hotkey). That both connects to
-   the endpoint and starts forwarding once the link is up.
+2. Optionally lock the endpoint so you do not edit it by accident.
+3. Click **Start Forwarding** (or press the hotkey). That connects to the
+   endpoint and starts forwarding once the link is up.
 
 While forwarding, the Mac cursor freezes and local input is suppressed; the
-PC is driven instead. **Stop Forwarding** or the hotkey again hands control
-back to the Mac.
+PC is driven instead. **Stop Forwarding** or the hotkey again returns
+control to the Mac.
 
 | Color | Meaning |
 | --- | --- |
 | Orange | Off, connecting, or reconnecting |
 | Green | Forwarding |
 
-There is no separate “connected but idle” mode on the Mac — connect and
-forward are the same action.
+The Mac has no separate "connected but idle" mode. Connect and forward are
+the same action.
 
 ### Hotkey
 
-Default: **⌘⌥K**. It works globally, regardless of which app is focused.
+Default: **⌘⌥K**. Works globally, no matter which app is focused.
 
 To change it: unlock the hotkey row, click the shortcut field, then press a
 new combination that includes at least one modifier (⌘ ⌥ ⌃ or ⇧). Esc
-cancels. After a successful change it locks again automatically.
+cancels. After a successful change it locks again.
 
 ### Connecting over the internet (ngrok)
 
-When the Mac can't reach the PC directly:
+When the Mac cannot reach the PC directly:
 
 1. Start the Windows app and note its port.
 2. `ngrok tcp 12653`
-3. On the Mac, set the endpoint to the ngrok host/port (e.g.
+3. On the Mac, set the endpoint to the ngrok host/port (for example
    `0.tcp.sa.ngrok.io:12653`) and click **Start Forwarding**.
 
 ## What gets forwarded
 
 - Mouse movement, clicks, and scroll
-- Keyboard input, including international characters — plain character keys
+- Keyboard input, including international characters. Plain character keys
   (Shift / Option / AltGr output such as `ñ`, `\`, `|`, `@`) are translated
-  with the Mac's layout and typed on Windows as Unicode text
+  with the Mac's layout and typed on Windows as Unicode text.
 - Enter, Tab, arrows, function keys, and Ctrl/Cmd shortcuts as real key
-  events (Cmd → Windows key, Ctrl → Ctrl)
+  events (Cmd becomes the Windows key, Ctrl stays Ctrl)
 
 ## Known limitations
 
-- Option/Alt is not treated as a shortcut modifier (so Alt+F won't open a
-  Windows menu). On many Mac layouts Option is needed for ordinary
-  characters.
-- Media / system keys (brightness, volume, Mission Control, Dictation,
+- Option/Alt is not treated as a shortcut modifier, so Alt+F will not open a
+  Windows menu. On many Mac layouts Option is needed for ordinary characters.
+- Media and system keys (brightness, volume, Mission Control, Dictation,
   etc.) are not forwarded.
-- Dead-key accent sequences should compose via macOS's own state, but aren't
-  exhaustively tested across every layout.
+- Dead-key accent sequences should compose via macOS's own state, but this
+  is not exhaustively tested across every layout.
 - The link is unauthenticated. Keep it on a private network, or use
-  something like ngrok so the port isn't open to the public internet.
+  something like ngrok so the port is not open to the public internet.
 
 ## Notes
 
-- The Mac only opens outbound TCP; Windows never connects out.
+- The Mac only opens outbound TCP. Windows never connects out.
 - Mac builds sign with `SkeletonKey Dev` in
   `~/Library/Keychains/skeletonkey.keychain-db`. Ad-hoc signing is not
-  enough — macOS pins TCC grants to a per-build cdhash unless a real cert
+  enough: macOS pins TCC grants to a per-build cdhash unless a real cert
   anchors the designated requirement. Grant Accessibility and Input
   Monitoring once after the first signed build; later rebuilds should keep
   them.
