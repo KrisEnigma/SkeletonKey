@@ -95,7 +95,8 @@ private struct HotKeyBinding: Equatable {
             UInt16(kVK_ANSI_6): "6", UInt16(kVK_ANSI_7): "7", UInt16(kVK_ANSI_8): "8",
             UInt16(kVK_ANSI_9): "9",
             UInt16(kVK_Space): "Space", UInt16(kVK_Return): "↩", UInt16(kVK_Escape): "Esc",
-            UInt16(kVK_Tab): "⇥", UInt16(kVK_Delete): "⌫"
+            UInt16(kVK_Tab): "⇥", UInt16(kVK_Delete): "⌫",
+            UInt16(kVK_ISO_Section): "§"
         ]
         return map[keyCode] ?? "Key\(keyCode)"
     }
@@ -888,8 +889,11 @@ private final class ConnectionManager {
     private var connection: NWConnection?
     private var ready = false
     private var reconnectWorkItem: DispatchWorkItem?
+    private var receiveBuffer = Data()
     var shouldReconnect: (() -> Bool)?
     var onStateChange: ((ConnectionState) -> Void)?
+    /// Peer → Mac clipboard text (decoded). Delivered on the main queue.
+    var onClipboard: ((String) -> Void)?
 
     init(host: String, port: UInt16) {
         self.host = host
@@ -918,6 +922,7 @@ private final class ConnectionManager {
             let connection = NWConnection(host: NWEndpoint.Host(self.host), port: endpointPort, using: parameters)
             self.connection = connection
             self.ready = false
+            self.receiveBuffer.removeAll(keepingCapacity: true)
             self.publish(.connecting)
 
             connection.stateUpdateHandler = { [weak self] state in
@@ -950,6 +955,7 @@ private final class ConnectionManager {
             self.connection?.cancel()
             self.connection = nil
             self.ready = false
+            self.receiveBuffer.removeAll(keepingCapacity: true)
             self.publish(.disconnected)
         }
     }
@@ -963,6 +969,7 @@ private final class ConnectionManager {
             self.connection?.cancel()
             self.connection = nil
             self.ready = false
+            self.receiveBuffer.removeAll(keepingCapacity: true)
             self.publish(.disconnected)
         }
     }
@@ -976,6 +983,9 @@ private final class ConnectionManager {
             reconnectWorkItem?.cancel()
             reconnectWorkItem = nil
             publish(.connected)
+            if let connection {
+                startReceive(on: connection)
+            }
         case .waiting(let error):
             ready = false
             publish(.connecting)
@@ -983,14 +993,74 @@ private final class ConnectionManager {
         case .failed(let error):
             ready = false
             connection = nil
+            receiveBuffer.removeAll(keepingCapacity: true)
             publish(.disconnected)
             scheduleReconnectIfNeeded(reason: error.localizedDescription)
         case .cancelled:
             ready = false
             connection = nil
+            receiveBuffer.removeAll(keepingCapacity: true)
             publish(.disconnected)
         @unknown default:
             ready = false
+        }
+    }
+
+    private func startReceive(on connection: NWConnection) {
+        connection.receive(minimumIncompleteLength: 1, maximumLength: 64 * 1024) { [weak self] data, _, isComplete, error in
+            guard let self else { return }
+            if let data, !data.isEmpty {
+                self.consumeIncoming(data)
+            }
+            if let error {
+                appLog("Receive error: \(error)")
+                return
+            }
+            if isComplete {
+                return
+            }
+            // Only continue if this is still the active connection.
+            guard self.connection === connection else { return }
+            self.startReceive(on: connection)
+        }
+    }
+
+    private func consumeIncoming(_ data: Data) {
+        receiveBuffer.append(data)
+        let newline = Data([0x0A])
+        while let range = receiveBuffer.range(of: newline) {
+            let lineData = receiveBuffer.subdata(in: receiveBuffer.startIndex..<range.lowerBound)
+            receiveBuffer.removeSubrange(receiveBuffer.startIndex..<range.upperBound)
+            if lineData.isEmpty { continue }
+            guard let line = String(data: lineData, encoding: .utf8) else { continue }
+            handleIncomingLine(line)
+        }
+        // Bound a pathological unterminated buffer.
+        let maxBuffered = 1024 * 1024
+        if receiveBuffer.count > maxBuffered {
+            receiveBuffer.removeAll(keepingCapacity: true)
+            appLog("Receive buffer overflow; discarded")
+        }
+    }
+
+    private func handleIncomingLine(_ line: String) {
+        let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.isEmpty == false else { return }
+        let parts = trimmed.split(separator: " ", maxSplits: 1, omittingEmptySubsequences: true)
+        guard parts.first == "clipboard", parts.count == 2 else {
+            appLog("clipboard: ignored inbound line \(parts.first.map(String.init) ?? "?")")
+            return
+        }
+        let encoded = String(parts[1])
+        guard let payload = Data(base64Encoded: encoded),
+              payload.count <= ClipboardBridge.maxUTF8Bytes,
+              let text = String(data: payload, encoding: .utf8) else {
+            appLog("clipboard: ignored invalid/oversized payload (\(encoded.count) b64 chars)")
+            return
+        }
+        appLog("clipboard: received \(text.utf8.count) bytes from PC")
+        DispatchQueue.main.async { [weak self] in
+            self?.onClipboard?(text)
         }
     }
 
@@ -1014,6 +1084,101 @@ private final class ConnectionManager {
 
     private func publish(_ state: ConnectionState) {
         onStateChange?(state)
+    }
+}
+
+/// Text clipboard for the Off ↔ Forwarding workflow:
+/// - While forwarding: keep both sides in sync
+/// - On Start: push Mac clipboard to the PC
+/// - On Stop: still accept one last PC → Mac push so paste works after return
+private final class ClipboardBridge {
+    static let maxUTF8Bytes = 512 * 1024
+
+    private let connection: ConnectionManager
+    private var timer: Timer?
+    private var lastChangeCount = NSPasteboard.general.changeCount
+    private var lastSentText: String?
+    private var suppressText: String?
+    private var forwarding = false
+
+    init(connection: ConnectionManager) {
+        self.connection = connection
+    }
+
+    func setForwarding(_ forwarding: Bool) {
+        if forwarding {
+            appLog("clipboard: forwarding on — pushing Mac clipboard")
+            startPolling()
+        } else {
+            // Ask the PC for its clipboard before we go Off, so paste works
+            // after Stop. Keep receiving; only stop outbound polling.
+            appLog("clipboard: forwarding off — requesting PC clipboard")
+            connection.send("clipboard-request")
+            stopPolling()
+        }
+    }
+
+    /// Apply peer text even after Stop so the PC flush can land for paste.
+    func applyRemote(_ text: String) {
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.setString(text, forType: .string)
+        lastChangeCount = pasteboard.changeCount
+        suppressText = text
+        lastSentText = text
+        appLog("clipboard: applied remote text (\(text.utf8.count) bytes)")
+    }
+
+    private func startPolling() {
+        stopPolling()
+        forwarding = true
+        lastChangeCount = NSPasteboard.general.changeCount
+        poll(force: true)
+        let timer = Timer(timeInterval: 0.3, repeats: true) { [weak self] _ in
+            self?.poll(force: false)
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        self.timer = timer
+    }
+
+    private func stopPolling() {
+        timer?.invalidate()
+        timer = nil
+        forwarding = false
+    }
+
+    private func poll(force: Bool) {
+        guard forwarding else { return }
+        let pasteboard = NSPasteboard.general
+        let changeCount = pasteboard.changeCount
+        if force == false {
+            guard changeCount != lastChangeCount else { return }
+        }
+        lastChangeCount = changeCount
+
+        guard let text = pasteboard.string(forType: .string), text.isEmpty == false else {
+            if force {
+                appLog("clipboard: Mac pasteboard empty, nothing to push")
+            }
+            return
+        }
+        if text == suppressText {
+            return
+        }
+        if force == false, text == lastSentText {
+            return
+        }
+        let utf8Count = text.utf8.count
+        guard utf8Count <= Self.maxUTF8Bytes else {
+            appLog("clipboard: skipped oversized local paste (\(utf8Count) bytes)")
+            return
+        }
+
+        let encoded = Data(text.utf8).base64EncodedString()
+        lastSentText = text
+        suppressText = nil
+        connection.send("clipboard \(encoded)")
+        appLog("clipboard: sent local text (\(utf8Count) bytes)")
     }
 }
 
@@ -1085,6 +1250,10 @@ private final class KeyboardEventRouter {
     private var deadKeyState: UInt32 = 0
     private var pendingText: [CGKeyCode: String] = [:]
     private var toggleHotKey = HotKeyBinding.default
+    /// Fired from the event tap when the toggle is pressed while capturing,
+    /// so we can swallow the key (no local/remote character) and still stop.
+    var onToggleHotKey: (() -> Void)?
+    private var toggleHotKeyPressed = false
 
     // Modifier-down events are held here instead of being sent immediately.
     // If the next event turns out to be the app's own toggle hotkey, we drop
@@ -1109,6 +1278,7 @@ private final class KeyboardEventRouter {
 
     func setToggleHotKey(_ binding: HotKeyBinding) {
         toggleHotKey = binding
+        toggleHotKeyPressed = false
     }
 
     /// Called when capture turns off. Releases any modifier we told Windows
@@ -1122,6 +1292,7 @@ private final class KeyboardEventRouter {
         }
         sentModifierKeyCodes.removeAll()
         armedModifiers.removeAll()
+        toggleHotKeyPressed = false
     }
 
     fileprivate func handle(type: CGEventType, event: CGEvent) -> Bool {
@@ -1134,19 +1305,30 @@ private final class KeyboardEventRouter {
         let loggedKeyCode = CGKeyCode(event.getIntegerValueField(.keyboardEventKeycode))
         appLog("keyboard: tap saw type=\(type.rawValue) keyCode=\(loggedKeyCode) capturing=\(state.isCapturing())")
 
-        guard state.isCapturing() else {
-            return false
-        }
-
-        // The toggle hotkey is the app's own local control gesture, not
-        // something the remote machine should ever see, and it must keep
-        // reaching the separate global-hotkey listener even while we're
-        // capturing, or there'd be no way to turn capture back off.
+        // Always swallow the toggle hotkey — even when Off. Combos like ⇧§
+        // insert a real character (° on many layouts); if we only intercept
+        // while capturing, pressing the hotkey to Start types into whatever
+        // app is focused. Cmd+Option+K never showed this because it doesn't
+        // produce text. HotKeyController won't see a swallowed event, so the
+        // callback is fired from here on keyDown.
         if isToggleHotkeyKeyEvent(type: type, event: event) {
             if !armedModifiers.isEmpty {
                 appLog("keyboard: dropped toggle-hotkey modifiers \(armedModifiers.values.map { String($0) })")
             }
             armedModifiers.removeAll()
+            if type == .keyDown {
+                if toggleHotKeyPressed == false {
+                    toggleHotKeyPressed = true
+                    appLog("keyboard: toggle hotkey swallowed + fired (capturing=\(state.isCapturing()))")
+                    onToggleHotKey?()
+                }
+            } else {
+                toggleHotKeyPressed = false
+            }
+            return true
+        }
+
+        guard state.isCapturing() else {
             return false
         }
 
@@ -1167,7 +1349,11 @@ private final class KeyboardEventRouter {
             return false
         }
         let keyCode = CGKeyCode(event.getIntegerValueField(.keyboardEventKeycode))
-        return toggleHotKey.matches(keyCode: keyCode, flags: event.flags)
+        let matched = toggleHotKey.matches(keyCode: keyCode, flags: event.flags)
+        if matched == false, UInt16(keyCode) == toggleHotKey.keyCode {
+            appLog("keyboard: toggle keyCode matched but modifiers did not (flags=\(event.flags.rawValue) want=\(toggleHotKey.displayString))")
+        }
+        return matched
     }
 
     private func handleKey(event: CGEvent, isDown: Bool) {
@@ -1586,6 +1772,7 @@ final class SkeletonKeyAppDelegate: NSObject, NSApplicationDelegate {
     private var statusController: StatusBarController!
     private var controlWindow: ControlWindowController!
     private var connectionManager: ConnectionManager!
+    private var clipboardBridge: ClipboardBridge!
     private var mouseRouter: MouseEventRouter!
     private var keyboardRouter: KeyboardEventRouter!
     private var inputTapController: InputTapController!
@@ -1619,9 +1806,16 @@ final class SkeletonKeyAppDelegate: NSObject, NSApplicationDelegate {
         statusController = StatusBarController()
         controlWindow = ControlWindowController()
         connectionManager = ConnectionManager(host: host, port: port)
+        clipboardBridge = ClipboardBridge(connection: connectionManager)
+        connectionManager.onClipboard = { [weak self] text in
+            self?.clipboardBridge.applyRemote(text)
+        }
         mouseRouter = MouseEventRouter(state: state, connection: connectionManager)
         keyboardRouter = KeyboardEventRouter(state: state, connection: connectionManager)
         keyboardRouter.setToggleHotKey(hotKeyBinding)
+        keyboardRouter.onToggleHotKey = { [weak self] in
+            self?.toggleRemoteMode()
+        }
         inputTapController = InputTapController(mouseRouter: mouseRouter, keyboardRouter: keyboardRouter)
 
         // The connection is a background service: Start Forwarding (re)applies
@@ -1809,7 +2003,15 @@ final class SkeletonKeyAppDelegate: NSObject, NSApplicationDelegate {
             // that stays up regardless of the hotkey, so Windows can't
             // infer capture state from socket connect/disconnect alone —
             // tell it explicitly.
+            // Clipboard handoff before capturing-off: request PC clipboard,
+            // then tell Windows capture ended.
+            if capturing == false {
+                self.clipboardBridge.setForwarding(false)
+            }
             self.connectionManager.send("capturing \(capturing ? "on" : "off")")
+            if capturing {
+                self.clipboardBridge.setForwarding(true)
+            }
             appLog("capturing=\(capturing)")
         }
 

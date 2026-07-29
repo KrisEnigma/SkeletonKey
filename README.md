@@ -125,10 +125,13 @@ When the Mac cannot reach the PC directly:
   with the Mac's layout and typed on Windows as Unicode text.
 - Enter, Tab, arrows, function keys, and Ctrl/Cmd shortcuts as real key
   events (Cmd becomes the Windows key, Ctrl stays Ctrl)
+- Plain text clipboard both ways while forwarding. On Stop, the Mac
+  explicitly requests the PC clipboard so you can paste after you return.
+  On Start, the Mac clipboard is pushed to the PC. Text only (not images
+  or files).
 
 ## Known limitations
 
-- Clipboard is not shared. Copy/paste does not cross between the Mac and the PC.
 - Option/Alt is not treated as a shortcut modifier, so Alt+F will not open a
   Windows menu. On many Mac layouts Option is needed for ordinary characters.
 - Media and system keys (brightness, volume, Mission Control, Dictation,
@@ -137,6 +140,8 @@ When the Mac cannot reach the PC directly:
   is not exhaustively tested across every layout.
 - The link is unauthenticated. Keep it on a private network, or use
   something like ngrok so the port is not open to the public internet.
+  Clipboard text crosses that same link during forwarding and the
+  Start/Stop handoff.
 
 ## Notes
 

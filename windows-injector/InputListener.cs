@@ -30,12 +30,17 @@ internal sealed class InputListener
     };
 
     private readonly object gate = new();
+    private readonly object writeGate = new();
     private TcpListener? tcpListener;
     private CancellationTokenSource? cts;
+    private NetworkStream? activeStream;
+    private TcpClient? activeClient;
     // Only inject while the Mac has explicitly said capture is on. The TCP
     // link itself stays up in the background; connection alone must never
     // move this PC's mouse.
     private volatile bool capturing;
+
+    public const int MaxClipboardUtf8Bytes = 512 * 1024;
 
     public int Port { get; private set; }
 
@@ -43,6 +48,9 @@ internal sealed class InputListener
     public event Action? ClientConnected;
     public event Action? ClientDisconnected;
     public event Action<bool>? CapturingChanged;
+    public event Action<string>? ClipboardReceived;
+    /// <summary>Mac asked for the PC clipboard right now (Stop handoff).</summary>
+    public event Action? ClipboardRequested;
     public event Action<string>? StatusMessage;
     public event Action<string>? ErrorOccurred;
 
@@ -132,6 +140,11 @@ internal sealed class InputListener
                 finally
                 {
                     capturing = false;
+                    lock (writeGate)
+                    {
+                        activeStream = null;
+                        activeClient = null;
+                    }
                     ClientDisconnected?.Invoke();
                     StatusMessage?.Invoke("Client disconnected");
                 }
@@ -141,18 +154,123 @@ internal sealed class InputListener
 
     private void HandleClient(TcpClient client, CancellationToken token)
     {
-        using var stream = client.GetStream();
-        using var reader = new StreamReader(stream, Encoding.UTF8);
-
-        while (!token.IsCancellationRequested)
+        var stream = client.GetStream();
+        lock (writeGate)
         {
-            var line = reader.ReadLine();
-            if (line is null)
+            activeClient = client;
+            activeStream = stream;
+        }
+
+        var buffer = new byte[8192];
+        var pending = new MemoryStream();
+
+        try
+        {
+            while (!token.IsCancellationRequested)
             {
-                break;
+                int read;
+                try
+                {
+                    read = stream.Read(buffer, 0, buffer.Length);
+                }
+                catch
+                {
+                    break;
+                }
+
+                if (read <= 0)
+                {
+                    break;
+                }
+
+                for (var i = 0; i < read; i++)
+                {
+                    var b = buffer[i];
+                    if (b == (byte)'\n')
+                    {
+                        var lineBytes = pending.ToArray();
+                        pending.SetLength(0);
+                        if (lineBytes.Length == 0)
+                        {
+                            continue;
+                        }
+                        // Trim optional CR from CRLF.
+                        var length = lineBytes.Length;
+                        if (lineBytes[length - 1] == (byte)'\r')
+                        {
+                            length--;
+                        }
+                        var line = Encoding.UTF8.GetString(lineBytes, 0, length);
+                        HandleLine(line);
+                    }
+                    else
+                    {
+                        pending.WriteByte(b);
+                        if (pending.Length > MaxClipboardUtf8Bytes * 2)
+                        {
+                            pending.SetLength(0);
+                            StatusMessage?.Invoke("clipboard: discarded oversized inbound line");
+                        }
+                    }
+                }
+            }
+        }
+        finally
+        {
+            lock (writeGate)
+            {
+                if (ReferenceEquals(activeStream, stream))
+                {
+                    activeStream = null;
+                    activeClient = null;
+                }
+            }
+        }
+    }
+
+    /// <summary>
+    /// Push local clipboard text to the Mac. No-op if nobody is connected.
+    /// Uses the socket Send path so it is safe while the reader loop is blocked.
+    /// </summary>
+    public void SendClipboard(string text)
+    {
+        if (string.IsNullOrEmpty(text))
+        {
+            return;
+        }
+
+        var utf8 = Encoding.UTF8.GetBytes(text);
+        if (utf8.Length > MaxClipboardUtf8Bytes)
+        {
+            StatusMessage?.Invoke($"clipboard: skipped oversized local paste ({utf8.Length} bytes)");
+            return;
+        }
+
+        var line = "clipboard " + Convert.ToBase64String(utf8) + "\n";
+        var payload = Encoding.UTF8.GetBytes(line);
+        SendRaw(payload);
+        StatusMessage?.Invoke($"clipboard: sent {utf8.Length} bytes to Mac");
+    }
+
+    private void SendRaw(byte[] payload)
+    {
+        lock (writeGate)
+        {
+            var client = activeClient;
+            if (client is null || !client.Connected)
+            {
+                StatusMessage?.Invoke("clipboard: send skipped (no client)");
+                return;
             }
 
-            HandleLine(line);
+            try
+            {
+                client.Client.Send(payload, SocketFlags.None);
+            }
+            catch (Exception ex)
+            {
+                StatusMessage?.Invoke($"clipboard send error: {ex.Message}");
+            }
         }
     }
 
@@ -163,44 +281,89 @@ internal sealed class InputListener
             return;
         }
 
-        var parts = line.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-        if (parts.Length == 0)
-        {
-            return;
-        }
+        var space = line.IndexOf(' ');
+        var command = space < 0 ? line : line[..space];
+        var rest = space < 0 ? "" : line[(space + 1)..].TrimStart();
 
         try
         {
-            switch (parts[0])
+            switch (command)
             {
-                case "capturing" when parts.Length >= 2:
-                    capturing = parts[1].Equals("on", StringComparison.OrdinalIgnoreCase);
-                    CapturingChanged?.Invoke(capturing);
+                case "capturing":
+                {
+                    var parts = rest.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+                    if (parts.Length >= 1)
+                    {
+                        capturing = parts[0].Equals("on", StringComparison.OrdinalIgnoreCase);
+                        CapturingChanged?.Invoke(capturing);
+                    }
                     break;
-                case "move" when parts.Length >= 3:
+                }
+                case "clipboard-request":
+                    // Mac is stopping / asking for a flush. Raise synchronously so
+                    // the tray can Invoke and write the reply before we continue.
+                    ClipboardRequested?.Invoke();
+                    break;
+                case "clipboard":
+                    if (!string.IsNullOrEmpty(rest))
+                    {
+                        HandleClipboardCommand(rest);
+                    }
+                    break;
+                case "move":
+                {
                     if (!capturing) break;
-                    InjectMouseMove(ParseInt(parts[1]), ParseInt(parts[2]));
+                    var parts = rest.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+                    if (parts.Length >= 2)
+                    {
+                        InjectMouseMove(ParseInt(parts[0]), ParseInt(parts[1]));
+                    }
                     break;
-                case "button" when parts.Length >= 3:
+                }
+                case "button":
+                {
                     if (!capturing) break;
-                    InjectMouseButton(ParseInt(parts[1]), parts[2].Equals("down", StringComparison.OrdinalIgnoreCase));
+                    var parts = rest.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+                    if (parts.Length >= 2)
+                    {
+                        InjectMouseButton(ParseInt(parts[0]), parts[1].Equals("down", StringComparison.OrdinalIgnoreCase));
+                    }
                     break;
-                case "scroll" when parts.Length >= 3:
+                }
+                case "scroll":
+                {
                     if (!capturing) break;
-                    InjectMouseScroll(ParseInt(parts[1]), ParseInt(parts[2]));
+                    var parts = rest.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+                    if (parts.Length >= 2)
+                    {
+                        InjectMouseScroll(ParseInt(parts[0]), ParseInt(parts[1]));
+                    }
                     break;
-                case "text" when parts.Length >= 3:
+                }
+                case "text":
+                {
                     if (!capturing) break;
-                    InjectUnicodeText(parts[1], parts[2].Equals("down", StringComparison.OrdinalIgnoreCase));
+                    var parts = rest.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+                    if (parts.Length >= 2)
+                    {
+                        InjectUnicodeText(parts[0], parts[1].Equals("down", StringComparison.OrdinalIgnoreCase));
+                    }
                     break;
-                case "vk" when parts.Length >= 3:
+                }
+                case "vk":
+                {
                     if (!capturing) break;
-                    InjectVirtualKey(ParseUInt16(parts[1]), parts[2].Equals("down", StringComparison.OrdinalIgnoreCase));
+                    var parts = rest.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+                    if (parts.Length >= 2)
+                    {
+                        InjectVirtualKey(ParseUInt16(parts[0]), parts[1].Equals("down", StringComparison.OrdinalIgnoreCase));
+                    }
                     break;
+                }
                 case "heartbeat":
                     break;
                 default:
-                    StatusMessage?.Invoke($"Unhandled command: {line}");
+                    StatusMessage?.Invoke($"Unhandled command: {command}");
                     break;
             }
         }
@@ -208,6 +371,39 @@ internal sealed class InputListener
         {
             StatusMessage?.Invoke($"Injection error: {ex.Message}");
         }
+    }
+
+    private void HandleClipboardCommand(string encoded)
+    {
+        byte[] payload;
+        try
+        {
+            payload = Convert.FromBase64String(encoded);
+        }
+        catch (FormatException)
+        {
+            StatusMessage?.Invoke("clipboard: ignored invalid payload");
+            return;
+        }
+
+        if (payload.Length == 0 || payload.Length > MaxClipboardUtf8Bytes)
+        {
+            StatusMessage?.Invoke("clipboard: ignored empty/oversized payload");
+            return;
+        }
+
+        string text;
+        try
+        {
+            text = Encoding.UTF8.GetString(payload);
+        }
+        catch (DecoderFallbackException)
+        {
+            StatusMessage?.Invoke("clipboard: ignored non-utf8 payload");
+            return;
+        }
+
+        ClipboardReceived?.Invoke(text);
     }
 
     private static int ParseInt(string value) => int.Parse(value, NumberStyles.Integer, CultureInfo.InvariantCulture);
