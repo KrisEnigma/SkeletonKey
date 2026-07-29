@@ -41,7 +41,87 @@ private func requestInputMonitoringAccess() {
     _ = CGRequestListenEventAccess()
 }
 
-private let toggleKeyCode: UInt32 = UInt32(kVK_ANSI_K)
+private let defaultToggleKeyCode: UInt16 = UInt16(kVK_ANSI_K)
+private let defaultToggleModifiers: NSEvent.ModifierFlags = [.command, .option]
+
+private struct HotKeyBinding: Equatable {
+    var keyCode: UInt16
+    var modifiers: NSEvent.ModifierFlags
+
+    static let `default` = HotKeyBinding(keyCode: defaultToggleKeyCode, modifiers: defaultToggleModifiers)
+
+    var displayString: String {
+        var parts: [String] = []
+        if modifiers.contains(.control) { parts.append("⌃") }
+        if modifiers.contains(.option) { parts.append("⌥") }
+        if modifiers.contains(.shift) { parts.append("⇧") }
+        if modifiers.contains(.command) { parts.append("⌘") }
+        parts.append(Self.keyName(keyCode))
+        return parts.joined()
+    }
+
+    func matches(_ event: NSEvent) -> Bool {
+        guard event.keyCode == keyCode else { return false }
+        let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+        let interesting: NSEvent.ModifierFlags = [.command, .option, .control, .shift]
+        return flags.intersection(interesting) == modifiers.intersection(interesting)
+    }
+
+    func matches(keyCode: CGKeyCode, flags: CGEventFlags) -> Bool {
+        guard UInt16(keyCode) == self.keyCode else { return false }
+        let wantsCommand = modifiers.contains(.command)
+        let wantsOption = modifiers.contains(.option)
+        let wantsControl = modifiers.contains(.control)
+        let wantsShift = modifiers.contains(.shift)
+        return flags.contains(.maskCommand) == wantsCommand
+            && flags.contains(.maskAlternate) == wantsOption
+            && flags.contains(.maskControl) == wantsControl
+            && flags.contains(.maskShift) == wantsShift
+    }
+
+    private static func keyName(_ keyCode: UInt16) -> String {
+        let map: [UInt16: String] = [
+            UInt16(kVK_ANSI_A): "A", UInt16(kVK_ANSI_B): "B", UInt16(kVK_ANSI_C): "C",
+            UInt16(kVK_ANSI_D): "D", UInt16(kVK_ANSI_E): "E", UInt16(kVK_ANSI_F): "F",
+            UInt16(kVK_ANSI_G): "G", UInt16(kVK_ANSI_H): "H", UInt16(kVK_ANSI_I): "I",
+            UInt16(kVK_ANSI_J): "J", UInt16(kVK_ANSI_K): "K", UInt16(kVK_ANSI_L): "L",
+            UInt16(kVK_ANSI_M): "M", UInt16(kVK_ANSI_N): "N", UInt16(kVK_ANSI_O): "O",
+            UInt16(kVK_ANSI_P): "P", UInt16(kVK_ANSI_Q): "Q", UInt16(kVK_ANSI_R): "R",
+            UInt16(kVK_ANSI_S): "S", UInt16(kVK_ANSI_T): "T", UInt16(kVK_ANSI_U): "U",
+            UInt16(kVK_ANSI_V): "V", UInt16(kVK_ANSI_W): "W", UInt16(kVK_ANSI_X): "X",
+            UInt16(kVK_ANSI_Y): "Y", UInt16(kVK_ANSI_Z): "Z",
+            UInt16(kVK_ANSI_0): "0", UInt16(kVK_ANSI_1): "1", UInt16(kVK_ANSI_2): "2",
+            UInt16(kVK_ANSI_3): "3", UInt16(kVK_ANSI_4): "4", UInt16(kVK_ANSI_5): "5",
+            UInt16(kVK_ANSI_6): "6", UInt16(kVK_ANSI_7): "7", UInt16(kVK_ANSI_8): "8",
+            UInt16(kVK_ANSI_9): "9",
+            UInt16(kVK_Space): "Space", UInt16(kVK_Return): "↩", UInt16(kVK_Escape): "Esc",
+            UInt16(kVK_Tab): "⇥", UInt16(kVK_Delete): "⌫"
+        ]
+        return map[keyCode] ?? "Key\(keyCode)"
+    }
+}
+
+private enum SavedHotKey {
+    private static let keyCodeKey = "SkeletonKey.hotKeyCode"
+    private static let modifiersKey = "SkeletonKey.hotKeyModifiers"
+
+    static func load() -> HotKeyBinding {
+        let defaults = UserDefaults.standard
+        guard defaults.object(forKey: keyCodeKey) != nil else {
+            return .default
+        }
+        let keyCode = UInt16(defaults.integer(forKey: keyCodeKey))
+        let raw = UInt(defaults.integer(forKey: modifiersKey))
+        let modifiers = NSEvent.ModifierFlags(rawValue: raw)
+        return HotKeyBinding(keyCode: keyCode, modifiers: modifiers)
+    }
+
+    static func save(_ binding: HotKeyBinding) {
+        let defaults = UserDefaults.standard
+        defaults.set(Int(binding.keyCode), forKey: keyCodeKey)
+        defaults.set(Int(binding.modifiers.rawValue), forKey: modifiersKey)
+    }
+}
 
 struct HistoryEntry: Equatable {
     let host: String
@@ -142,7 +222,7 @@ private final class StatusBarController {
     init() {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         if let button = statusItem.button {
-            button.image = Self.menuBarImage(badgeColor: .systemRed)
+            button.image = Self.menuBarImage(badgeColor: .systemOrange)
             button.imagePosition = .imageOnly
             button.toolTip = "SkeletonKey — double-click to open"
             // Don't assign statusItem.menu permanently: that eats clicks and
@@ -190,13 +270,13 @@ private final class StatusBarController {
                 self.connectionItem.title = "Connection: Connected"
             }
 
-            // Brand mark + semaphore badge: red idle, orange armed/waiting,
-            // green actively capturing.
+            // Brand mark + semaphore badge: orange idle/waiting, green capturing.
+            // Red is reserved for real failures — idle must not look like an error.
             let color: NSColor
             if remoteActive {
                 color = connectionState == .connected ? .systemGreen : .systemOrange
             } else {
-                color = .systemRed
+                color = .systemOrange
             }
             self.statusItem.button?.image = Self.menuBarImage(badgeColor: color)
             self.statusItem.button?.toolTip = remoteActive
@@ -317,24 +397,34 @@ private final class StatusBarController {
 
 private final class ControlWindowController: NSWindowController, NSWindowDelegate, NSComboBoxDelegate {
     private let addressField = NSComboBox()
+    private let endpointLockButton = NSButton()
     private let statusDotView = NSImageView()
     private let statusTextField = NSTextField(labelWithString: "Off")
     private let statusPill = NSView()
-    private let applyButton = NSButton(title: "Apply", target: nil, action: nil)
     private let toggleButton = NSButton(title: "Start Forwarding", target: nil, action: nil)
+    private let hotkeyButton = NSButton(title: "⌘⌥K", target: nil, action: nil)
+    private let hotkeyLockButton = NSButton()
     private let quitButton = NSButton(title: "Quit", target: nil, action: nil)
-    private let applyTarget = ActionTarget()
     private let toggleTarget = ActionTarget()
+    private let hotkeyTarget = ActionTarget()
     private let quitTarget = ActionTarget()
+    private let endpointLockTarget = ActionTarget()
+    private let hotkeyLockTarget = ActionTarget()
     private var historyEntries: [HistoryEntry] = []
-    private var historySelectAction: ((String, UInt16) -> Void)?
+    private var isRecordingHotkey = false
+    private var hotkeyMonitor: Any?
+    private var currentHotKey = HotKeyBinding.default
+    private var endpointLocked = UserDefaults.standard.bool(forKey: "SkeletonKey.endpointLocked")
+    private var hotkeyLocked = true
     /// When false, closing the window won't demote us to `.accessory`
     /// (capture needs that demotion not to yank CGAssociate out from under us).
     var canDemoteToAccessory: (() -> Bool)?
+    var onHotKeyChanged: ((HotKeyBinding) -> Void)?
+    var onHotKeyRecordingChanged: ((Bool) -> Void)?
 
     init() {
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 400, height: 360),
+            contentRect: NSRect(x: 0, y: 0, width: 400, height: 380),
             styleMask: [.titled, .closable, .miniaturizable, .fullSizeContentView],
             backing: .buffered,
             defer: false
@@ -348,6 +438,7 @@ private final class ControlWindowController: NSWindowController, NSWindowDelegat
 
         super.init(window: window)
         window.delegate = self
+        hotkeyLocked = loadHotkeyLocked()
         buildContent()
     }
 
@@ -360,28 +451,21 @@ private final class ControlWindowController: NSWindowController, NSWindowDelegat
         toggleTarget.action = action
     }
 
-    func setApplyAction(_ action: @escaping (String, UInt16) -> Void) {
-        applyTarget.action = { [weak self] in
-            guard let self else { return }
-            guard let (host, port) = self.parseAddress() else {
-                NSSound(named: "Tink")?.play()
-                self.flashInvalidField()
-                return
-            }
-            action(host, port)
-        }
-    }
-
     func setQuitAction(_ action: @escaping () -> Void) {
         quitTarget.action = action
     }
 
-    func setHistorySelectAction(_ action: @escaping (String, UInt16) -> Void) {
-        historySelectAction = action
-    }
-
     func setEndpoint(host: String, port: UInt16) {
         addressField.stringValue = "\(host):\(port)"
+    }
+
+    func currentEndpoint() -> (host: String, port: UInt16)? {
+        parseAddress()
+    }
+
+    func flashInvalidAddress() {
+        NSSound(named: "Tink")?.play()
+        flashInvalidField()
     }
 
     func updateHistory(_ entries: [HistoryEntry]) {
@@ -391,11 +475,18 @@ private final class ControlWindowController: NSWindowController, NSWindowDelegat
     }
 
     func comboBoxSelectionDidChange(_ notification: Notification) {
+        guard endpointLocked == false else { return }
         let index = addressField.indexOfSelectedItem
         guard index >= 0, index < historyEntries.count else { return }
-        let entry = historyEntries[index]
-        addressField.stringValue = entry.display
-        historySelectAction?(entry.host, entry.port)
+        addressField.stringValue = historyEntries[index].display
+    }
+
+    func setHotKey(_ binding: HotKeyBinding) {
+        currentHotKey = binding
+        if isRecordingHotkey == false {
+            hotkeyButton.title = binding.displayString
+        }
+        applyHotkeyLockState()
     }
 
     func updateStatus(remoteActive: Bool, connectionState: ConnectionState) {
@@ -404,14 +495,14 @@ private final class ControlWindowController: NSWindowController, NSWindowDelegat
 
         switch (remoteActive, connectionState) {
         case (false, _):
-            color = .systemRed
+            color = .systemOrange
             statusText = "Off"
         case (true, .connecting):
             color = .systemOrange
             statusText = "Connecting"
         case (true, .connected):
             color = .systemGreen
-            statusText = "Connected"
+            statusText = "Forwarding"
         case (true, .disconnected):
             color = .systemOrange
             statusText = "Reconnecting"
@@ -424,10 +515,10 @@ private final class ControlWindowController: NSWindowController, NSWindowDelegat
 
         toggleButton.layer?.backgroundColor = (remoteActive ? NSColor.systemRed : NSColor.systemGreen).cgColor
         styleCapsuleTitle(toggleButton, text: remoteActive ? "Stop Forwarding" : "Start Forwarding")
+        toggleButton.keyEquivalent = remoteActive ? "" : "\r"
     }
 
     override func showWindow(_ sender: Any?) {
-        // Dock icon while the window is up; menu-bar-only once it's closed.
         NSApp.setActivationPolicy(.regular)
         super.showWindow(sender)
         window?.makeKeyAndOrderFront(sender)
@@ -435,8 +526,8 @@ private final class ControlWindowController: NSWindowController, NSWindowDelegat
     }
 
     func windowWillClose(_ notification: Notification) {
-        // Defer so AppKit can finish tearing down the window before we drop
-        // back to accessory (otherwise the policy swap can glitch the close).
+        stopHotkeyRecording()
+        hotkeyButton.title = currentHotKey.displayString
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
             guard self.canDemoteToAccessory?() ?? true else {
@@ -467,9 +558,9 @@ private final class ControlWindowController: NSWindowController, NSWindowDelegat
         appNameLabel.font = .systemFont(ofSize: 11, weight: .semibold)
         appNameLabel.textColor = .tertiaryLabelColor
 
-        statusDotView.image = Self.dotImage(color: .systemRed, diameter: 8)
+        statusDotView.image = Self.dotImage(color: .systemOrange, diameter: 8)
         statusTextField.font = .systemFont(ofSize: 13, weight: .semibold)
-        statusTextField.textColor = .systemRed
+        statusTextField.textColor = .systemOrange
 
         let pillStack = NSStackView(views: [statusDotView, statusTextField])
         pillStack.orientation = .horizontal
@@ -479,7 +570,7 @@ private final class ControlWindowController: NSWindowController, NSWindowDelegat
 
         statusPill.wantsLayer = true
         statusPill.layer?.cornerRadius = 12
-        statusPill.layer?.backgroundColor = NSColor.systemRed.withAlphaComponent(0.14).cgColor
+        statusPill.layer?.backgroundColor = NSColor.systemOrange.withAlphaComponent(0.14).cgColor
         statusPill.translatesAutoresizingMaskIntoConstraints = false
         statusPill.addSubview(pillStack)
         NSLayoutConstraint.activate([
@@ -493,39 +584,63 @@ private final class ControlWindowController: NSWindowController, NSWindowDelegat
         divider.boxType = .separator
         divider.translatesAutoresizingMaskIntoConstraints = false
 
-        // Endpoint card: one address field that doubles as the recent-history
-        // picker (native combo box dropdown, arrow lives right in the input)
-        // plus a real Apply button for typed-in addresses.
         let settingsCard = NSView()
         settingsCard.wantsLayer = true
         settingsCard.layer?.backgroundColor = NSColor.black.withAlphaComponent(0.06).cgColor
         settingsCard.layer?.cornerRadius = 12
         settingsCard.translatesAutoresizingMaskIntoConstraints = false
 
-        let sectionLabel = makeFieldLabel("Endpoint")
-
+        let endpointLabel = makeFieldLabel("Endpoint")
         configureAddressField(addressField, placeholder: "host:port, e.g. 0.tcp.ngrok.io:12653")
         addressField.delegate = self
         addressField.translatesAutoresizingMaskIntoConstraints = false
 
-        applyButton.bezelStyle = .rounded
-        applyButton.controlSize = .regular
-        applyButton.keyEquivalent = "\r"
-        applyButton.target = applyTarget
-        applyButton.action = #selector(ActionTarget.invoke)
-        applyButton.toolTip = "Apply this host and port"
-        applyButton.setContentHuggingPriority(.defaultHigh, for: .horizontal)
+        configureLockButton(endpointLockButton, target: endpointLockTarget) { [weak self] in
+            self?.toggleEndpointLock()
+        }
 
-        let applyRowSpacer = NSView()
-        let applyRow = NSStackView(views: [applyRowSpacer, applyButton])
-        applyRow.orientation = .horizontal
-        applyRow.alignment = .centerY
-        applyRow.translatesAutoresizingMaskIntoConstraints = false
+        let endpointRow = NSStackView(views: [addressField, endpointLockButton])
+        endpointRow.orientation = .horizontal
+        endpointRow.alignment = .centerY
+        endpointRow.spacing = 6
+        endpointRow.distribution = .fill
+        endpointRow.translatesAutoresizingMaskIntoConstraints = false
+        addressField.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        addressField.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        applyEndpointLockState()
 
-        let cardStack = NSStackView(views: [sectionLabel, addressField, applyRow])
+        let hotkeyLabel = makeFieldLabel("Hotkey")
+        hotkeyButton.bezelStyle = .rounded
+        hotkeyButton.controlSize = .regular
+        hotkeyButton.target = hotkeyTarget
+        hotkeyButton.action = #selector(ActionTarget.invoke)
+        hotkeyTarget.action = { [weak self] in self?.beginHotkeyRecording() }
+        hotkeyButton.translatesAutoresizingMaskIntoConstraints = false
+        hotkeyButton.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        hotkeyButton.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+
+        configureLockButton(hotkeyLockButton, target: hotkeyLockTarget) { [weak self] in
+            self?.toggleHotkeyLock()
+        }
+
+        let hotkeyRow = NSStackView(views: [hotkeyButton, hotkeyLockButton])
+        hotkeyRow.orientation = .horizontal
+        hotkeyRow.alignment = .centerY
+        hotkeyRow.spacing = 6
+        hotkeyRow.distribution = .fill
+        hotkeyRow.translatesAutoresizingMaskIntoConstraints = false
+        applyHotkeyLockState()
+
+        let hotkeyTip = NSTextField(labelWithString: "Unlock to change · needs ⌘ ⌥ ⌃ or ⇧")
+        hotkeyTip.font = .systemFont(ofSize: 10)
+        hotkeyTip.textColor = .tertiaryLabelColor
+
+        let cardStack = NSStackView(views: [endpointLabel, endpointRow, hotkeyLabel, hotkeyRow, hotkeyTip])
         cardStack.orientation = .vertical
         cardStack.spacing = 10
         cardStack.translatesAutoresizingMaskIntoConstraints = false
+        cardStack.setCustomSpacing(14, after: endpointRow)
+        cardStack.setCustomSpacing(4, after: hotkeyRow)
 
         settingsCard.addSubview(cardStack)
         NSLayoutConstraint.activate([
@@ -533,10 +648,10 @@ private final class ControlWindowController: NSWindowController, NSWindowDelegat
             cardStack.trailingAnchor.constraint(equalTo: settingsCard.trailingAnchor, constant: -16),
             cardStack.topAnchor.constraint(equalTo: settingsCard.topAnchor, constant: 16),
             cardStack.bottomAnchor.constraint(equalTo: settingsCard.bottomAnchor, constant: -16),
-            addressField.leadingAnchor.constraint(equalTo: cardStack.leadingAnchor),
-            addressField.trailingAnchor.constraint(equalTo: cardStack.trailingAnchor),
-            applyRow.leadingAnchor.constraint(equalTo: cardStack.leadingAnchor),
-            applyRow.trailingAnchor.constraint(equalTo: cardStack.trailingAnchor)
+            endpointRow.leadingAnchor.constraint(equalTo: cardStack.leadingAnchor),
+            endpointRow.trailingAnchor.constraint(equalTo: cardStack.trailingAnchor),
+            hotkeyRow.leadingAnchor.constraint(equalTo: cardStack.leadingAnchor),
+            hotkeyRow.trailingAnchor.constraint(equalTo: cardStack.trailingAnchor)
         ])
 
         toggleButton.target = toggleTarget
@@ -546,6 +661,7 @@ private final class ControlWindowController: NSWindowController, NSWindowDelegat
         toggleButton.layer?.cornerRadius = 20
         toggleButton.layer?.backgroundColor = NSColor.systemGreen.cgColor
         styleCapsuleTitle(toggleButton, text: "Start Forwarding")
+        toggleButton.keyEquivalent = "\r"
         toggleButton.translatesAutoresizingMaskIntoConstraints = false
         toggleButton.heightAnchor.constraint(equalToConstant: 40).isActive = true
 
@@ -556,12 +672,12 @@ private final class ControlWindowController: NSWindowController, NSWindowDelegat
         quitButton.controlSize = .small
         quitButton.font = .systemFont(ofSize: 11)
 
-        let shortcutHintLabel = NSTextField(labelWithString: "⌘⌥K to toggle")
-        shortcutHintLabel.font = .systemFont(ofSize: 11)
-        shortcutHintLabel.textColor = .tertiaryLabelColor
+        let hintLabel = NSTextField(labelWithString: "Hotkey toggles forwarding")
+        hintLabel.font = .systemFont(ofSize: 11)
+        hintLabel.textColor = .tertiaryLabelColor
 
         let footerSpacer = NSView()
-        let footerRow = NSStackView(views: [shortcutHintLabel, footerSpacer, quitButton])
+        let footerRow = NSStackView(views: [hintLabel, footerSpacer, quitButton])
         footerRow.orientation = .horizontal
         footerRow.alignment = .centerY
         footerRow.translatesAutoresizingMaskIntoConstraints = false
@@ -589,6 +705,115 @@ private final class ControlWindowController: NSWindowController, NSWindowDelegat
                 view.trailingAnchor.constraint(equalTo: mainStack.trailingAnchor)
             ])
         }
+    }
+
+    private func beginHotkeyRecording() {
+        guard hotkeyLocked == false else { return }
+        guard isRecordingHotkey == false else { return }
+        isRecordingHotkey = true
+        hotkeyButton.title = "Press new hotkey…"
+        // Keep keystrokes out of the endpoint field while we wait for a shortcut.
+        window?.makeFirstResponder(hotkeyButton)
+        onHotKeyRecordingChanged?(true)
+        hotkeyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            guard let self else { return event }
+            if event.keyCode == UInt16(kVK_Escape) {
+                self.stopHotkeyRecording()
+                self.hotkeyButton.title = self.currentHotKey.displayString
+                return nil
+            }
+            let mods = event.modifierFlags.intersection([.command, .option, .control, .shift])
+            guard mods.isEmpty == false else {
+                // Bare letters/numbers must not type into the endpoint field.
+                return nil
+            }
+            let binding = HotKeyBinding(keyCode: event.keyCode, modifiers: mods)
+            self.stopHotkeyRecording()
+            self.currentHotKey = binding
+            self.hotkeyButton.title = binding.displayString
+            self.hotkeyLocked = true
+            UserDefaults.standard.set(true, forKey: "SkeletonKey.hotkeyLocked")
+            self.applyHotkeyLockState()
+            self.onHotKeyChanged?(binding)
+            return nil
+        }
+    }
+
+    private func stopHotkeyRecording() {
+        if let hotkeyMonitor {
+            NSEvent.removeMonitor(hotkeyMonitor)
+            self.hotkeyMonitor = nil
+        }
+        guard isRecordingHotkey else { return }
+        isRecordingHotkey = false
+        onHotKeyRecordingChanged?(false)
+    }
+
+    private func toggleEndpointLock() {
+        endpointLocked.toggle()
+        UserDefaults.standard.set(endpointLocked, forKey: "SkeletonKey.endpointLocked")
+        applyEndpointLockState()
+        if endpointLocked {
+            window?.makeFirstResponder(nil)
+        }
+    }
+
+    private func applyEndpointLockState() {
+        addressField.isEnabled = !endpointLocked
+        addressField.isEditable = !endpointLocked
+        styleLockButton(endpointLockButton, locked: endpointLocked, subject: "endpoint")
+    }
+
+    private func toggleHotkeyLock() {
+        if isRecordingHotkey {
+            stopHotkeyRecording()
+            hotkeyButton.title = currentHotKey.displayString
+        }
+        hotkeyLocked.toggle()
+        UserDefaults.standard.set(hotkeyLocked, forKey: "SkeletonKey.hotkeyLocked")
+        applyHotkeyLockState()
+        if hotkeyLocked {
+            window?.makeFirstResponder(nil)
+        }
+    }
+
+    private func applyHotkeyLockState() {
+        hotkeyButton.isEnabled = !hotkeyLocked
+        hotkeyButton.toolTip = hotkeyLocked
+            ? "Unlock to change the hotkey"
+            : "Click, then press a shortcut with a modifier (Esc cancels)"
+        styleLockButton(hotkeyLockButton, locked: hotkeyLocked, subject: "hotkey")
+    }
+
+    private func configureLockButton(_ button: NSButton, target: ActionTarget, action: @escaping () -> Void) {
+        button.bezelStyle = .regularSquare
+        button.isBordered = false
+        button.imagePosition = .imageOnly
+        button.target = target
+        button.action = #selector(ActionTarget.invoke)
+        target.action = action
+        button.translatesAutoresizingMaskIntoConstraints = false
+        button.widthAnchor.constraint(equalToConstant: 28).isActive = true
+        button.heightAnchor.constraint(equalToConstant: 28).isActive = true
+        button.setContentHuggingPriority(.required, for: .horizontal)
+    }
+
+    private func styleLockButton(_ button: NSButton, locked: Bool, subject: String) {
+        let symbol = locked ? "lock.fill" : "lock.open.fill"
+        button.image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)
+        button.contentTintColor = locked ? .secondaryLabelColor : .tertiaryLabelColor
+        button.toolTip = locked
+            ? "Unlock \(subject) to edit"
+            : "Lock \(subject) to prevent accidental edits"
+    }
+
+    private func loadHotkeyLocked() -> Bool {
+        let defaults = UserDefaults.standard
+        // Default locked so a stray click doesn't start listening.
+        guard defaults.object(forKey: "SkeletonKey.hotkeyLocked") != nil else {
+            return true
+        }
+        return defaults.bool(forKey: "SkeletonKey.hotkeyLocked")
     }
 
     private func styleCapsuleTitle(_ button: NSButton, text: String) {
@@ -859,12 +1084,13 @@ private final class KeyboardEventRouter {
     private let connection: ConnectionManager
     private var deadKeyState: UInt32 = 0
     private var pendingText: [CGKeyCode: String] = [:]
+    private var toggleHotKey = HotKeyBinding.default
 
     // Modifier-down events are held here instead of being sent immediately.
-    // If the next event turns out to be the app's own Cmd+Option+K toggle,
-    // we drop them silently; otherwise we flush them right before the key
-    // they're modifying. This is what stops the toggle hotkey's own Cmd/Alt
-    // presses from leaking to the remote host as an unmatched "key down".
+    // If the next event turns out to be the app's own toggle hotkey, we drop
+    // them silently; otherwise we flush them right before the key they're
+    // modifying. This is what stops the toggle hotkey's own modifier presses
+    // from leaking to the remote host as an unmatched "key down".
     private var armedModifiers: [CGKeyCode: UInt16] = [:]
 
     // Modifiers we've actually confirmed sending "down" for. A modifier can
@@ -879,6 +1105,10 @@ private final class KeyboardEventRouter {
     init(state: SharedState, connection: ConnectionManager) {
         self.state = state
         self.connection = connection
+    }
+
+    func setToggleHotKey(_ binding: HotKeyBinding) {
+        toggleHotKey = binding
     }
 
     /// Called when capture turns off. Releases any modifier we told Windows
@@ -937,12 +1167,7 @@ private final class KeyboardEventRouter {
             return false
         }
         let keyCode = CGKeyCode(event.getIntegerValueField(.keyboardEventKeycode))
-        guard keyCode == CGKeyCode(kVK_ANSI_K) else {
-            return false
-        }
-        let flags = event.flags
-        return flags.contains(.maskCommand) && flags.contains(.maskAlternate)
-            && !flags.contains(.maskControl) && !flags.contains(.maskShift)
+        return toggleHotKey.matches(keyCode: keyCode, flags: event.flags)
     }
 
     private func handleKey(event: CGEvent, isDown: Bool) {
@@ -1291,38 +1516,39 @@ private final class HotKeyController {
     private var globalMonitor: Any?
     private var localMonitor: Any?
     private var togglePressed = false
+    private var suspended = false
+    private var binding = HotKeyBinding.default
 
-    func registerToggleHotKey(keyCode: UInt16, callback: @escaping () -> Void) {
-        let matchesHotKey: (NSEvent) -> Bool = { event in
-            let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
-            return event.type == .keyDown
-                && event.keyCode == keyCode
-                && flags.contains(.command)
-                && flags.contains(.option)
-                && !flags.contains(.control)
-                && !flags.contains(.shift)
-        }
+    func registerToggleHotKey(binding: HotKeyBinding, callback: @escaping () -> Void) {
+        unregister()
+        self.binding = binding
+        let keyCode = binding.keyCode
 
-        globalMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.keyDown, .keyUp]) { event in
+        globalMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.keyDown, .keyUp]) { [weak self] event in
+            guard let self, self.suspended == false else { return }
             if event.type == .keyUp && event.keyCode == keyCode {
                 self.togglePressed = false
                 return
             }
 
-            if matchesHotKey(event) {
+            if event.type == .keyDown && self.binding.matches(event) {
                 guard !self.togglePressed else { return }
                 self.togglePressed = true
                 callback()
             }
         }
 
-        localMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .keyUp]) { event in
+        localMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .keyUp]) { [weak self] event in
+            guard let self else { return event }
+            if self.suspended {
+                return event
+            }
             if event.type == .keyUp && event.keyCode == keyCode {
                 self.togglePressed = false
                 return event
             }
 
-            if matchesHotKey(event) {
+            if event.type == .keyDown && self.binding.matches(event) {
                 guard !self.togglePressed else { return event }
                 self.togglePressed = true
                 callback()
@@ -1330,6 +1556,13 @@ private final class HotKeyController {
             }
             return event
         }
+    }
+
+    /// While the hotkey field is recording, ignore the previous binding so it
+    /// can't toggle forwarding underneath the recorder.
+    func setSuspended(_ value: Bool) {
+        suspended = value
+        togglePressed = false
     }
 
     func unregister() {
@@ -1341,6 +1574,8 @@ private final class HotKeyController {
             NSEvent.removeMonitor(localMonitor)
             self.localMonitor = nil
         }
+        togglePressed = false
+        suspended = false
     }
 }
 
@@ -1355,10 +1590,14 @@ final class SkeletonKeyAppDelegate: NSObject, NSApplicationDelegate {
     private var keyboardRouter: KeyboardEventRouter!
     private var inputTapController: InputTapController!
     private let hotKeys = HotKeyController()
+    private var hotKeyBinding = SavedHotKey.load()
     private var eventTap: CFMachPort?
     private var eventTapRetryTimer: Timer?
     private var permissionPrompted = false
     private var isCapturing = false
+    /// Set around intentional endpoint changes so a reconnect doesn't disarm
+    /// a Start Forwarding that just armed capture.
+    private var ignoreDisconnectDisarm = false
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         // Menu-bar agent: stay out of the Dock. The status item is the
@@ -1382,25 +1621,32 @@ final class SkeletonKeyAppDelegate: NSObject, NSApplicationDelegate {
         connectionManager = ConnectionManager(host: host, port: port)
         mouseRouter = MouseEventRouter(state: state, connection: connectionManager)
         keyboardRouter = KeyboardEventRouter(state: state, connection: connectionManager)
+        keyboardRouter.setToggleHotKey(hotKeyBinding)
         inputTapController = InputTapController(mouseRouter: mouseRouter, keyboardRouter: keyboardRouter)
 
-        // The connection is a background service independent of the hotkey:
-        // it connects on launch and keeps itself alive/reconnecting on its
-        // own. Capture (actually moving the remote cursor) is a separate
-        // on/off flag the hotkey controls, gated by SharedState.isCapturing()
-        // so it can only ever be true once the connection is genuinely live.
-        connectionManager.shouldReconnect = { true }
+        // The connection is a background service: Start Forwarding (re)applies
+        // the endpoint and arms capture; actual cursor takeover waits until
+        // SharedState.isCapturing() (armed + genuinely connected).
+        connectionManager.shouldReconnect = { [weak self] in
+            self?.state.isRemoteActive() == true
+        }
         connectionManager.onStateChange = { [weak self] connectionState in
             guard let self else { return }
+            let previous = self.state.connectionStateValue()
             self.state.setConnectionState(connectionState)
 
-            // A dropped / retrying link must not leave capture "armed".
-            // Otherwise the next successful reconnect instantly takes over
-            // the mouse without another hotkey press — exactly the wrong
-            // feeling when the PC boots and the Mac was already waiting.
-            if connectionState != .connected && self.state.isRemoteActive() {
-                self.state.setRemoteActive(false)
-                appLog("remoteActive=false (cleared on disconnect)")
+            // A dropped live session must not leave capture armed, or the next
+            // successful reconnect would instantly take over the mouse. Stay
+            // armed through connecting after Start, and through intentional
+            // endpoint changes that briefly disconnect.
+            if previous == .connected && connectionState != .connected {
+                if self.ignoreDisconnectDisarm {
+                    self.ignoreDisconnectDisarm = false
+                    appLog("remoteActive kept through intentional reconnect")
+                } else if self.state.isRemoteActive() {
+                    self.state.setRemoteActive(false)
+                    appLog("remoteActive=false (cleared on disconnect)")
+                }
             }
 
             self.refreshCaptureState()
@@ -1410,7 +1656,6 @@ final class SkeletonKeyAppDelegate: NSObject, NSApplicationDelegate {
                 self.controlWindow.updateStatus(remoteActive: remoteActive, connectionState: connectionState)
             }
         }
-        connectionManager.ensureConnected()
 
         statusController.update(remoteActive: false, connectionState: .disconnected)
         statusController.setShowWindowAction { [weak self] in
@@ -1422,16 +1667,17 @@ final class SkeletonKeyAppDelegate: NSObject, NSApplicationDelegate {
         controlWindow.setToggleAction { [weak self] in
             self?.toggleRemoteMode()
         }
-        controlWindow.setApplyAction { [weak self] newHost, newPort in
-            self?.applyEndpoint(host: newHost, port: newPort)
-        }
-        controlWindow.setHistorySelectAction { [weak self] newHost, newPort in
-            self?.applyEndpoint(host: newHost, port: newPort)
-        }
         controlWindow.setQuitAction {
             NSApp.terminate(nil)
         }
         controlWindow.setEndpoint(host: host, port: port)
+        controlWindow.setHotKey(hotKeyBinding)
+        controlWindow.onHotKeyChanged = { [weak self] binding in
+            self?.updateHotKey(binding)
+        }
+        controlWindow.onHotKeyRecordingChanged = { [weak self] recording in
+            self?.hotKeys.setSuspended(recording)
+        }
         controlWindow.updateStatus(remoteActive: false, connectionState: .disconnected)
         controlWindow.updateHistory(SavedEndpoint.loadHistory())
         controlWindow.canDemoteToAccessory = { [weak self] in
@@ -1441,12 +1687,9 @@ final class SkeletonKeyAppDelegate: NSObject, NSApplicationDelegate {
         requestAccessibilityAccess()
         requestInputMonitoringAccess()
         installEventTapOrRetry()
+        registerCurrentHotKey()
 
-        hotKeys.registerToggleHotKey(keyCode: UInt16(toggleKeyCode)) { [weak self] in
-            self?.toggleRemoteMode()
-        }
-
-        appLog("SkeletonKey ready. Toggle remote mode with Cmd+Option+K.")
+        appLog("SkeletonKey ready. Toggle with \(hotKeyBinding.displayString).")
         appLog("Host: \(host) Port: \(port)")
         controlWindow.showWindow(nil)
     }
@@ -1471,24 +1714,59 @@ final class SkeletonKeyAppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func toggleRemoteMode() {
-        // Pure capture on/off, it never itself starts or retries the
-        // connection. Starting capture is only allowed while actually
-        // connected — arming-while-disconnected used to auto-grab the
-        // mouse the instant the PC came back, which felt broken.
-        let currentlyActive = state.isRemoteActive()
-        if currentlyActive == false && state.connectionStateValue() != .connected {
-            appLog("toggle ignored: not connected")
-            NSSound(named: "Tink")?.play()
+        if state.isRemoteActive() {
+            stopForwarding()
+        } else {
+            startForwarding()
+        }
+    }
+
+    private func startForwarding() {
+        guard let endpoint = controlWindow.currentEndpoint() else {
+            controlWindow.flashInvalidAddress()
+            appLog("start ignored: invalid endpoint")
             return
         }
 
-        let newValue = !currentlyActive
-        state.setRemoteActive(newValue)
+        let endpointChanged = endpoint.host != host || endpoint.port != port
+        if endpointChanged {
+            applyEndpoint(host: endpoint.host, port: endpoint.port)
+        } else if state.connectionStateValue() != .connected {
+            connectionManager.ensureConnected()
+        }
+
+        state.setRemoteActive(true)
         refreshCaptureState()
 
-        statusController.update(remoteActive: newValue, connectionState: state.connectionStateValue())
-        controlWindow.updateStatus(remoteActive: newValue, connectionState: state.connectionStateValue())
-        appLog("remoteActive=\(newValue)")
+        let connectionState = state.connectionStateValue()
+        statusController.update(remoteActive: true, connectionState: connectionState)
+        controlWindow.updateStatus(remoteActive: true, connectionState: connectionState)
+        appLog("remoteActive=true (start forwarding)")
+    }
+
+    private func stopForwarding() {
+        state.setRemoteActive(false)
+        refreshCaptureState()
+
+        let connectionState = state.connectionStateValue()
+        statusController.update(remoteActive: false, connectionState: connectionState)
+        controlWindow.updateStatus(remoteActive: false, connectionState: connectionState)
+        appLog("remoteActive=false (stop forwarding)")
+    }
+
+    private func updateHotKey(_ binding: HotKeyBinding) {
+        hotKeyBinding = binding
+        SavedHotKey.save(binding)
+        keyboardRouter.setToggleHotKey(binding)
+        controlWindow.setHotKey(binding)
+        registerCurrentHotKey()
+        appLog("Hotkey updated to \(binding.displayString)")
+    }
+
+    private func registerCurrentHotKey() {
+        hotKeys.registerToggleHotKey(binding: hotKeyBinding) { [weak self] in
+            self?.toggleRemoteMode()
+        }
     }
 
     /// Disassociates (or restores) the Mac's cursor from the mouse hardware
@@ -1563,6 +1841,9 @@ final class SkeletonKeyAppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func applyEndpoint(host newHost: String, port newPort: UInt16) {
+        if state.connectionStateValue() == .connected {
+            ignoreDisconnectDisarm = true
+        }
         host = newHost
         port = newPort
         connectionManager.updateEndpoint(host: newHost, port: newPort)
@@ -1571,10 +1852,6 @@ final class SkeletonKeyAppDelegate: NSObject, NSApplicationDelegate {
         SavedEndpoint.recordHistory(host: newHost, port: newPort)
         controlWindow.updateHistory(SavedEndpoint.loadHistory())
         appLog("Endpoint updated. Host: \(newHost) Port: \(newPort)")
-
-        // The connection is independent of capture intent, so always
-        // (re)connect to the new endpoint here regardless of whether the
-        // hotkey has been toggled on.
         connectionManager.ensureConnected()
     }
 

@@ -69,16 +69,14 @@ one-time override for that launch.
 open build/SkeletonKey.app
 ```
 
-A small window opens showing an endpoint field (defaulting to
-`192.168.0.100:12653`, edit it to your Windows PC's actual local IP and
-port, or pick a previously-used one from the dropdown) and an Apply button.
-The app lives in the menu bar; the Dock icon appears only while the
-control window is open. Closing the window hides the Dock icon again but
-leaves the app running. Double-click the menu bar icon to reopen the
-window, or single-click / right-click for the status menu. The app
-connects to the endpoint automatically in the background and shows
-"Connected" once it's up. This connection is independent of forwarding, so
-it stays alive whether or not you're actively controlling the PC.
+A small window opens with an endpoint field (defaulting to
+`192.168.0.100:12653` — edit it to your Windows PC's IP and port, or pick a
+previously-used one from the dropdown) and a hotkey control (defaults to
+**⌘⌥K**; click it and press a new shortcut to change). The app lives in the
+menu bar; the Dock icon appears only while the control window is open.
+Closing the window hides the Dock icon again but leaves the app running.
+Double-click the menu bar icon to reopen the window, or single-click /
+right-click for the status menu.
 
 The first time it runs, grant `Accessibility` and `Input Monitoring` to
 `SkeletonKey.app` if macOS prompts. Input Monitoring specifically doesn't
@@ -88,12 +86,13 @@ enabled there.
 
 ### 4. Take control
 
-Press **Cmd+Option+K** (or click **Start Forwarding**) once connected. Your
-Mac's mouse and keyboard now drive the Windows PC instead of the Mac itself.
-The Mac's own cursor freezes and local input is suppressed while this is
-active. Press **Cmd+Option+K** again to hand control back to the Mac. The
-hotkey works globally, so it doesn't matter which app is focused on the Mac
-when you press it.
+Enter the endpoint, then click **Start Forwarding** (or press the hotkey).
+That both connects to the written/selected address and starts forwarding
+once the link is up. Your Mac's mouse and keyboard then drive the Windows
+PC instead of the Mac itself. The Mac's own cursor freezes and local input
+is suppressed while this is active. Click **Stop Forwarding** or press the
+hotkey again to hand control back to the Mac. The hotkey works globally, so
+it doesn't matter which app is focused on the Mac when you press it.
 
 ### Connecting over the internet (ngrok)
 
@@ -103,7 +102,7 @@ networks):
 1. Start the Windows app (see above), noting its port.
 2. Expose it: `ngrok tcp 12653`
 3. On the Mac, enter the ngrok host and port in the endpoint field (e.g.
-   `0.tcp.sa.ngrok.io:12653`) and click Apply.
+   `0.tcp.sa.ngrok.io:12653`) and click **Start Forwarding**.
 
 ## What gets forwarded
 
