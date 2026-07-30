@@ -40,8 +40,14 @@ powershell -ExecutionPolicy Bypass -File build-windows-app.ps1
 ```
 Builds `windows-injector\publish\SkeletonKey.exe`. Double-click it, put a
 shortcut on the Desktop, or drop one in `shell:startup` (Win+R, then
-`shell:startup`) to launch at login. Re-run the script after changing
-Windows code.
+`shell:startup`) to launch at login. For tray-only startup (no settings
+window), set the shortcut Target to:
+
+```text
+"C:\path\to\SkeletonKey.exe" --minimized
+```
+
+Re-run the script after changing Windows code.
 
 For day-to-day development, `dotnet run --project .\windows-injector` is
 faster but needs a terminal each time.

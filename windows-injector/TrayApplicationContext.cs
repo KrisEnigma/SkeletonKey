@@ -21,7 +21,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
     private string? lastSentClipboardText;
     private bool capturing;
 
-    public TrayApplicationContext(int? cliPortOverride)
+    public TrayApplicationContext(int? cliPortOverride, bool startMinimized = false)
     {
         settingsForm = new SettingsForm(listener);
         // Force handle creation now so BeginInvoke below is safe even before
@@ -77,7 +77,14 @@ internal sealed class TrayApplicationContext : ApplicationContext
         var startPort = cliPortOverride ?? Settings.LoadPort();
         listener.Start(startPort);
 
-        settingsForm.Show();
+        if (startMinimized)
+        {
+            settingsForm.ShowInTaskbar = false;
+        }
+        else
+        {
+            settingsForm.Show();
+        }
     }
 
     private void RunOnUiThread(Action action)
