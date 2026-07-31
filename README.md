@@ -130,7 +130,9 @@ When the Mac cannot reach the PC directly:
   (Shift / Option / AltGr output such as `ñ`, `\`, `|`, `@`) are translated
   with the Mac's layout and typed on Windows as Unicode text.
 - Enter, Tab, arrows, function keys, and Ctrl/Cmd shortcuts as real key
-  events (Cmd becomes the Windows key, Ctrl stays Ctrl)
+  events. By default Cmd becomes the Windows key and Ctrl stays Ctrl. Check
+  **Invert ⌘ and ⌃** on the Mac if you prefer Mac-style shortcuts (⌘C copy)
+  while forwarding.
 - Plain text clipboard both ways while forwarding. On Stop, the Mac
   explicitly requests the PC clipboard so you can paste after you return.
   On Start, the Mac clipboard is pushed to the PC. Text only (not images

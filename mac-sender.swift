@@ -406,11 +406,13 @@ private final class ControlWindowController: NSWindowController, NSWindowDelegat
     private let hotkeyButton = NSButton(title: "⌘⌥K", target: nil, action: nil)
     private let hotkeyLockButton = NSButton()
     private let quitButton = NSButton(title: "Quit", target: nil, action: nil)
+    private let invertCommandControlButton = NSButton(checkboxWithTitle: "Invert ⌘ and ⌃", target: nil, action: nil)
     private let toggleTarget = ActionTarget()
     private let hotkeyTarget = ActionTarget()
     private let quitTarget = ActionTarget()
     private let endpointLockTarget = ActionTarget()
     private let hotkeyLockTarget = ActionTarget()
+    private let invertCommandControlTarget = ActionTarget()
     private var historyEntries: [HistoryEntry] = []
     private var isRecordingHotkey = false
     private var hotkeyMonitor: Any?
@@ -422,10 +424,11 @@ private final class ControlWindowController: NSWindowController, NSWindowDelegat
     var canDemoteToAccessory: (() -> Bool)?
     var onHotKeyChanged: ((HotKeyBinding) -> Void)?
     var onHotKeyRecordingChanged: ((Bool) -> Void)?
+    var onInvertCommandControlChanged: ((Bool) -> Void)?
 
     init() {
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 400, height: 380),
+            contentRect: NSRect(x: 0, y: 0, width: 400, height: 420),
             styleMask: [.titled, .closable, .miniaturizable, .fullSizeContentView],
             backing: .buffered,
             defer: false
@@ -636,12 +639,32 @@ private final class ControlWindowController: NSWindowController, NSWindowDelegat
         hotkeyTip.font = .systemFont(ofSize: 10)
         hotkeyTip.textColor = .tertiaryLabelColor
 
-        let cardStack = NSStackView(views: [endpointLabel, endpointRow, hotkeyLabel, hotkeyRow, hotkeyTip])
+        invertCommandControlButton.target = invertCommandControlTarget
+        invertCommandControlButton.action = #selector(ActionTarget.invoke)
+        invertCommandControlTarget.action = { [weak self] in
+            guard let self else { return }
+            let enabled = self.invertCommandControlButton.state == .on
+            UserDefaults.standard.set(enabled, forKey: "SkeletonKey.invertCommandControl")
+            self.onInvertCommandControlChanged?(enabled)
+        }
+        invertCommandControlButton.font = .systemFont(ofSize: 12)
+        invertCommandControlButton.state = UserDefaults.standard.bool(forKey: "SkeletonKey.invertCommandControl") ? .on : .off
+
+        let invertTip = NSTextField(labelWithString: "⌘ acts as Ctrl on Windows · ⌃ becomes Win")
+        invertTip.font = .systemFont(ofSize: 10)
+        invertTip.textColor = .tertiaryLabelColor
+
+        let cardStack = NSStackView(views: [
+            endpointLabel, endpointRow, hotkeyLabel, hotkeyRow, hotkeyTip,
+            invertCommandControlButton, invertTip
+        ])
         cardStack.orientation = .vertical
         cardStack.spacing = 10
         cardStack.translatesAutoresizingMaskIntoConstraints = false
         cardStack.setCustomSpacing(14, after: endpointRow)
         cardStack.setCustomSpacing(4, after: hotkeyRow)
+        cardStack.setCustomSpacing(14, after: hotkeyTip)
+        cardStack.setCustomSpacing(4, after: invertCommandControlButton)
 
         settingsCard.addSubview(cardStack)
         NSLayoutConstraint.activate([
@@ -1254,6 +1277,9 @@ private final class KeyboardEventRouter {
     /// so we can swallow the key (no local/remote character) and still stop.
     var onToggleHotKey: (() -> Void)?
     private var toggleHotKeyPressed = false
+    /// When true, ⌘ maps to Ctrl and ⌃ maps to Win — Mac-natural copy/paste
+    /// on Windows. Default off (⌘ = Win, ⌃ = Ctrl).
+    private var invertCommandControl = false
 
     // Modifier-down events are held here instead of being sent immediately.
     // If the next event turns out to be the app's own toggle hotkey, we drop
@@ -1281,12 +1307,21 @@ private final class KeyboardEventRouter {
         toggleHotKeyPressed = false
     }
 
+    func setInvertCommandControl(_ invert: Bool) {
+        if invertCommandControl == invert {
+            return
+        }
+        // Release with the old mapping so Windows doesn't see unmatched ups.
+        releaseAllHeldModifiers()
+        invertCommandControl = invert
+    }
+
     /// Called when capture turns off. Releases any modifier we told Windows
     /// was "down" but never got to release (e.g. capture was stopped mid
     /// key-combo) so it doesn't stay stuck down on the remote side.
     func releaseAllHeldModifiers() {
         for keyCode in sentModifierKeyCodes {
-            guard let vk = Self.modifierVirtualCodes[keyCode] else { continue }
+            guard let vk = virtualKey(forModifier: keyCode) else { continue }
             appLog("keyboard: vk \(vk) up (released on capture end)")
             connection.send("vk \(vk) up")
         }
@@ -1432,7 +1467,7 @@ private final class KeyboardEventRouter {
 
     private func handleFlagsChanged(event: CGEvent) {
         let keyCode = CGKeyCode(event.getIntegerValueField(.keyboardEventKeycode))
-        guard let vk = Self.modifierVirtualCodes[keyCode] else {
+        guard let vk = virtualKey(forModifier: keyCode) else {
             return
         }
 
@@ -1572,7 +1607,7 @@ private final class KeyboardEventRouter {
     ]
 
     // The modifier keys themselves, reported via flagsChanged rather than
-    // keyDown/keyUp.
+    // keyDown/keyUp. Cmd→Win / Ctrl→Ctrl by default; see invertCommandControl.
     private static let modifierVirtualCodes: [CGKeyCode: UInt16] = [
         CGKeyCode(kVK_Shift): 0x10,
         CGKeyCode(kVK_RightShift): 0x10,
@@ -1584,6 +1619,21 @@ private final class KeyboardEventRouter {
         CGKeyCode(kVK_RightCommand): 0x5B,
         CGKeyCode(kVK_CapsLock): 0x14
     ]
+
+    private func virtualKey(forModifier keyCode: CGKeyCode) -> UInt16? {
+        guard let vk = Self.modifierVirtualCodes[keyCode] else {
+            return nil
+        }
+        guard invertCommandControl else {
+            return vk
+        }
+        // Swap Cmd ↔ Ctrl only; Option / Shift / Caps stay put.
+        switch vk {
+        case 0x11: return 0x5B
+        case 0x5B: return 0x11
+        default: return vk
+        }
+    }
 
     // Letters/digits, used only when Cmd or Ctrl is held (i.e. a shortcut),
     // so Ctrl/Cmd+C etc. reach Windows as a real key combo instead of text.
@@ -1813,6 +1863,9 @@ final class SkeletonKeyAppDelegate: NSObject, NSApplicationDelegate {
         mouseRouter = MouseEventRouter(state: state, connection: connectionManager)
         keyboardRouter = KeyboardEventRouter(state: state, connection: connectionManager)
         keyboardRouter.setToggleHotKey(hotKeyBinding)
+        keyboardRouter.setInvertCommandControl(
+            UserDefaults.standard.bool(forKey: "SkeletonKey.invertCommandControl")
+        )
         keyboardRouter.onToggleHotKey = { [weak self] in
             self?.toggleRemoteMode()
         }
@@ -1871,6 +1924,10 @@ final class SkeletonKeyAppDelegate: NSObject, NSApplicationDelegate {
         }
         controlWindow.onHotKeyRecordingChanged = { [weak self] recording in
             self?.hotKeys.setSuspended(recording)
+        }
+        controlWindow.onInvertCommandControlChanged = { [weak self] enabled in
+            self?.keyboardRouter.setInvertCommandControl(enabled)
+            appLog("invertCommandControl=\(enabled)")
         }
         controlWindow.updateStatus(remoteActive: false, connectionState: .disconnected)
         controlWindow.updateHistory(SavedEndpoint.loadHistory())
