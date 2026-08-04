@@ -49,8 +49,8 @@ error.
   it on a secure desktop; use the PC's own mouse/keyboard for that dialog.
 - Games: letter keys arrive as typed text, not physical presses, so WASD and
   similar binds don't work. Many titles also ignore injected input entirely.
-- Option/Alt: left Option is left Alt; right Option is AltGr. Option still
-  isn't treated as a Windows shortcut modifier for letter keys (punctuation).
+- Option+letter types Mac punctuation; it doesn't do Windows Alt+letter menu
+  shortcuts. Alt+Tab / Alt+F4 still work.
 - No media / Mission Control / brightness keys.
 - Unauthenticated TCP. Use a LAN or a tunnel you trust; don't expose the port.
 
