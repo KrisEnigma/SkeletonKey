@@ -46,6 +46,11 @@ error.
 
 ## Limits
 
+- Letter keys are sent as typed text (layout-faithful), not physical key
+  presses — fine for apps, not for games that bind WASD / jump / etc. Enter,
+  Space, and arrows are real keys, but many titles still ignore injected
+  input (Raw Input, anti-cheat, or an elevated game without an elevated
+  listener).
 - Option/Alt isn’t a Windows shortcut modifier (kept for typing punctuation).
 - No media / Mission Control / brightness keys.
 - Unauthenticated TCP — LAN or a tunnel you trust; don’t expose the port.
