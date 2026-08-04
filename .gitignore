@@ -1,9 +1,17 @@
+# Mac build outputs
 mac-sender
 *.app
 build/
-.DS_Store
 
+# Windows build outputs
 windows-injector/bin/
 windows-injector/obj/
 windows-injector/publish/
+
+# Packaged releases
+dist/
+
+# Junk
+.DS_Store
+**/.DS_Store
 .fuse_hidden*
