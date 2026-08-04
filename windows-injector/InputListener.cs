@@ -455,16 +455,26 @@ internal sealed class InputListener
     /// Types the exact character(s) the Mac's own keyboard layout resolved
     /// (e.g. ñ from a Spanish LatAm layout), regardless of this PC's active
     /// keyboard layout. KEYEVENTF_UNICODE bypasses the local layout entirely.
+    ///
+    /// Down+up are sent together on key-down only. Splitting them across
+    /// separate Mac key-down / key-up events confuses Telegram (and other Qt
+    /// apps): the previous character sticks and replaces the next one
+    /// ("la dani" → "ll ddnn").
     /// </summary>
     private static void InjectUnicodeText(string hexCodeUnits, bool isDown)
     {
+        if (!isDown)
+        {
+            return;
+        }
+
         var codeUnits = hexCodeUnits.Split(',', StringSplitOptions.RemoveEmptyEntries);
-        var inputs = new INPUT[codeUnits.Length];
+        var inputs = new INPUT[codeUnits.Length * 2];
 
         for (var i = 0; i < codeUnits.Length; i++)
         {
             var codeUnit = ushort.Parse(codeUnits[i], NumberStyles.HexNumber, CultureInfo.InvariantCulture);
-            inputs[i] = new INPUT
+            inputs[i * 2] = new INPUT
             {
                 Type = InputType.Keyboard,
                 Data = new InputUnion
@@ -473,7 +483,22 @@ internal sealed class InputListener
                     {
                         WVk = 0,
                         WScan = codeUnit,
-                        DwFlags = (uint)(KeyEventFlags.Unicode | (isDown ? 0 : KeyEventFlags.KeyUp)),
+                        DwFlags = (uint)KeyEventFlags.Unicode,
+                        Time = 0,
+                        DwExtraInfo = IntPtr.Zero
+                    }
+                }
+            };
+            inputs[i * 2 + 1] = new INPUT
+            {
+                Type = InputType.Keyboard,
+                Data = new InputUnion
+                {
+                    Keyboard = new KEYBDINPUT
+                    {
+                        WVk = 0,
+                        WScan = codeUnit,
+                        DwFlags = (uint)(KeyEventFlags.Unicode | KeyEventFlags.KeyUp),
                         Time = 0,
                         DwExtraInfo = IntPtr.Zero
                     }
