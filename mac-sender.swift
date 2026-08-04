@@ -352,9 +352,7 @@ private final class StatusBarController {
     }
 
     private static func brandSourceImage() -> NSImage {
-        // Tight crop without the master artwork's empty black padding — the
-        // full AppIcon.icns keeps that padding for Dock, but menu-bar size
-        // needs the mark filling the pixel budget.
+        // Menu-bar mark is a tight crop; AppIcon.icns keeps Dock padding.
         if let url = Bundle.main.url(forResource: "MenuBarIcon", withExtension: "png"),
            let image = NSImage(contentsOf: url) {
             return image

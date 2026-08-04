@@ -119,13 +119,12 @@ swiftc main.swift mac-sender.swift -o "$executable_path" \
   -framework Network
 
 if [ ! -f assets/AppIcon.icns ]; then
-  echo "Missing assets/AppIcon.icns — run: sh scripts/generate-icons.sh" >&2
+  echo "Missing assets/AppIcon.icns" >&2
   exit 1
 fi
 cp assets/AppIcon.icns "$resources_path/AppIcon.icns"
-# Tight crop for the menu-bar mark (Dock keeps the padded AppIcon.icns).
-if [ -f assets/icon-mark-1024.png ]; then
-  sips -z 128 128 assets/icon-mark-1024.png --out "$resources_path/MenuBarIcon.png" >/dev/null
+if [ -f assets/MenuBarIcon.png ]; then
+  cp assets/MenuBarIcon.png "$resources_path/MenuBarIcon.png"
 fi
 cat > "$plist_path" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>

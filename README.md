@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/icon-1024.png" alt="SkeletonKey" width="128">
+  <img src="assets/MenuBarIcon.png" alt="SkeletonKey" width="128">
 </p>
 
 # SkeletonKey
@@ -56,5 +56,4 @@ error.
 ## Build notes
 
 Mac builds use a stable local **SkeletonKey Dev** cert so TCC grants survive
-rebuilds. Icons: edit `assets/icon-1024.png`, then
-`sh scripts/generate-icons.sh`. Windows day-to-day: `dotnet run --project .\windows-injector`.
+rebuilds. Windows day-to-day: `dotnet run --project .\windows-injector`.
