@@ -46,10 +46,8 @@ error.
 
 ## Limits
 
-- Letter keys are sent as typed characters so Mac layouts work, not as physical
-  key presses. That breaks games that bind WASD, jump, and similar. Enter,
-  Space, and arrows are real keys, but many games still ignore injected input
-  (Raw Input, anti-cheat, or an elevated game without an elevated listener).
+- Games: letter keys arrive as typed text, not physical presses, so WASD and
+  similar binds don't work. Many titles also ignore injected input entirely.
 - Option/Alt isn't a Windows shortcut modifier (kept so punctuation still
   types).
 - No media / Mission Control / brightness keys.
