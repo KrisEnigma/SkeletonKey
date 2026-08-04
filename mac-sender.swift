@@ -1345,28 +1345,45 @@ private final class KeyboardEventRouter {
     }
 
     fileprivate func handle(type: CGEventType, event: CGEvent) -> Bool {
-        // Always swallow the toggle hotkey — even when Off. Combos like ⇧§
-        // insert a real character (° on many layouts); if we only intercept
-        // while capturing, pressing the hotkey to Start types into whatever
-        // app is focused. Cmd+Option+K never showed this because it doesn't
-        // produce text. HotKeyController won't see a swallowed event, so the
+        // Always handle the toggle hotkey — even when Off. Combos like ⇧|
+        // or ⇧§ produce a real character; if we only intercept while
+        // capturing, pressing the hotkey to Start types into whatever app
+        // is focused. HotKeyController won't see a swallowed event, so the
         // callback is fired from here on keyDown.
-        if isToggleHotkeyKeyEvent(type: type, event: event) {
-            if !armedModifiers.isEmpty {
-                appLog("keyboard: dropped toggle-hotkey modifiers \(armedModifiers.values.map { String($0) })")
-            }
-            cancelArmedFlush()
-            armedModifiers.removeAll()
-            if type == .keyDown {
+        //
+        // keyUp clears the latch by keyCode alone: for Shift+key shortcuts
+        // the keyUp often arrives after Shift was released, so a full
+        // matches() check would miss it and leave toggleHotKeyPressed stuck
+        // (needing several presses before the next toggle fires).
+        if type == .keyDown || type == .keyUp {
+            let keyCode = CGKeyCode(event.getIntegerValueField(.keyboardEventKeycode))
+            let isHotkeyKey = UInt16(keyCode) == toggleHotKey.keyCode
+
+            if type == .keyDown, toggleHotKey.matches(keyCode: keyCode, flags: event.flags) {
+                if !armedModifiers.isEmpty {
+                    appLog("keyboard: dropped toggle-hotkey modifiers \(armedModifiers.values.map { String($0) })")
+                }
+                cancelArmedFlush()
+                armedModifiers.removeAll()
                 if toggleHotKeyPressed == false {
                     toggleHotKeyPressed = true
                     appLog("keyboard: toggle hotkey swallowed + fired (capturing=\(state.isCapturing()))")
                     onToggleHotKey?()
                 }
-            } else {
-                toggleHotKeyPressed = false
+                return true
             }
-            return true
+
+            if type == .keyUp, isHotkeyKey {
+                let wasPressed = toggleHotKeyPressed
+                toggleHotKeyPressed = false
+                if wasPressed || toggleHotKey.matches(keyCode: keyCode, flags: event.flags) {
+                    cancelArmedFlush()
+                    armedModifiers.removeAll()
+                    return true
+                }
+            } else if type == .keyDown, isHotkeyKey {
+                appLog("keyboard: toggle keyCode matched but modifiers did not (flags=\(event.flags.rawValue) want=\(toggleHotKey.displayString))")
+            }
         }
 
         guard state.isCapturing() else {
@@ -1383,18 +1400,6 @@ private final class KeyboardEventRouter {
         }
 
         return true
-    }
-
-    private func isToggleHotkeyKeyEvent(type: CGEventType, event: CGEvent) -> Bool {
-        guard type == .keyDown || type == .keyUp else {
-            return false
-        }
-        let keyCode = CGKeyCode(event.getIntegerValueField(.keyboardEventKeycode))
-        let matched = toggleHotKey.matches(keyCode: keyCode, flags: event.flags)
-        if matched == false, UInt16(keyCode) == toggleHotKey.keyCode {
-            appLog("keyboard: toggle keyCode matched but modifiers did not (flags=\(event.flags.rawValue) want=\(toggleHotKey.displayString))")
-        }
-        return matched
     }
 
     private func handleKey(event: CGEvent, isDown: Bool) {
