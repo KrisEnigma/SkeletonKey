@@ -26,7 +26,8 @@ internal sealed class InputListener
         0x21, 0x22, 0x23, 0x24, // Prior/Next/End/Home
         0x25, 0x26, 0x27, 0x28, // Left/Up/Right/Down
         0x2D, 0x2E,             // Insert/Delete
-        0x5B, 0x5C              // LWin/RWin
+        0x5B, 0x5C,             // LWin/RWin
+        0xA5                    // RMENU (AltGr)
     };
 
     private readonly object gate = new();

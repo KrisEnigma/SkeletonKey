@@ -1403,13 +1403,14 @@ private final class KeyboardEventRouter {
     private func handleKey(event: CGEvent, isDown: Bool) {
         let keyCode = CGKeyCode(event.getIntegerValueField(.keyboardEventKeycode))
         let flags = event.flags
-        // Deliberately NOT including Option/Alt here. On Spanish/European
-        // layouts, Option/AltGr is how you type ordinary punctuation that
-        // has no direct key of its own (backslash, pipe, @, ~, brackets,
-        // etc.), treating it as a shortcut modifier broke typing those
-        // characters, which matters far more than Alt+letter menu shortcuts
-        // working on Windows. That's a known limitation for now.
-        let isShortcutContext = flags.contains(.maskCommand) || flags.contains(.maskControl)
+        // Option alone isn't a Windows shortcut modifier (Spanish/European
+        // layouts use Option for punctuation). Control+Option without Command
+        // is AltGr, not a Ctrl chord — don't send that Control (and under
+        // Invert ⌘/⌃ it would become Win).
+        let isAltGr = Self.isAltGr(flags)
+        let isShortcutContext =
+            flags.contains(.maskCommand)
+            || (flags.contains(.maskControl) && isAltGr == false)
 
         if let vk = Self.controlKeyVirtualCodes[keyCode] {
             flushArmedModifiers()
@@ -1432,13 +1433,13 @@ private final class KeyboardEventRouter {
                 appLog("keyboard: keyCode \(keyCode) produced no text (dead key or unmapped)")
                 return
             }
-            // Any armed modifier (Shift, or Option/AltGr on layouts where it
-            // produces punctuation like backslash) is already fully baked
-            // into this character, drop it silently rather than also
-            // forwarding it as a separate press. For Shift that's just
-            // redundant; for Alt it could actually confuse the receiving
-            // app mid-keystroke.
+            // Shift / Option / AltGr are already baked into this character.
+            // Drop armed copies, and retract any Control we already forwarded
+            // for AltGr (under invert that Control is Win and breaks typing).
             armedModifiers.removeAll()
+            if isAltGr {
+                retractForwardedControl(reason: "altgr text")
+            }
             let hex = Self.hexEncode(text)
             pendingText[keyCode] = hex
             appLog("keyboard: text \(hex) down")
@@ -1477,9 +1478,24 @@ private final class KeyboardEventRouter {
             return
         }
 
-        let isDown = Self.modifierIsCurrentlyDown(keyCode: keyCode, flags: event.flags)
+        let flags = event.flags
+        let isDown = Self.modifierIsCurrentlyDown(keyCode: keyCode, flags: flags)
+        let isControlKey =
+            Int(keyCode) == kVK_Control || Int(keyCode) == kVK_RightControl
+        let isOptionKey =
+            Int(keyCode) == kVK_Option || Int(keyCode) == kVK_RightOption
 
         if isDown {
+            // AltGr is Control+Option. Never forward that Control — with
+            // Invert ⌘/⌃ it becomes the Windows key and kills AltGr typing.
+            if isControlKey, flags.contains(.maskAlternate) || optionModifierIsActive() {
+                appLog("keyboard: suppressed AltGr synthetic control down")
+                return
+            }
+            if isOptionKey {
+                retractForwardedControl(reason: "option down")
+            }
+
             if modifierBelongsToToggleHotKey(keyCode) {
                 // Hold briefly so a completed toggle can drop these without
                 // leaking; timer covers "held for PC mouse" if no key follows.
@@ -1578,11 +1594,44 @@ private final class KeyboardEventRouter {
         }
 
         consider(.maskShift, left: kVK_Shift, right: kVK_RightShift)
-        consider(.maskControl, left: kVK_Control, right: kVK_RightControl)
+        // Skip Control when Option is down — that's AltGr, not Ctrl.
+        if Self.isAltGr(flags) == false {
+            consider(.maskControl, left: kVK_Control, right: kVK_RightControl)
+        }
         consider(.maskAlternate, left: kVK_Option, right: kVK_RightOption)
         consider(.maskCommand, left: kVK_Command, right: kVK_RightCommand)
         if preferImmediate == false, !armedModifiers.isEmpty {
             scheduleArmedModifierFlush()
+        }
+    }
+
+    /// Control+Option without Command: AltGr (punctuation), not a Ctrl chord.
+    private static func isAltGr(_ flags: CGEventFlags) -> Bool {
+        flags.contains(.maskControl)
+            && flags.contains(.maskAlternate)
+            && flags.contains(.maskCommand) == false
+    }
+
+    private func optionModifierIsActive() -> Bool {
+        let optionCodes: [CGKeyCode] = [CGKeyCode(kVK_Option), CGKeyCode(kVK_RightOption)]
+        return optionCodes.contains { sentModifierKeyCodes.contains($0) || armedModifiers.keys.contains($0) }
+    }
+
+    /// Release a Control we already told Windows was down (often AltGr's
+    /// synthetic Ctrl). Uses the invert mapping so Win is released too.
+    private func retractForwardedControl(reason: String) {
+        let controlCodes: [CGKeyCode] = [CGKeyCode(kVK_Control), CGKeyCode(kVK_RightControl)]
+        for keyCode in controlCodes {
+            if let vk = armedModifiers.removeValue(forKey: keyCode) {
+                appLog("keyboard: dropped armed control \(vk) (\(reason))")
+                continue
+            }
+            guard sentModifierKeyCodes.remove(keyCode) != nil,
+                  let vk = virtualKey(forModifier: keyCode) else {
+                continue
+            }
+            appLog("keyboard: vk \(vk) up (retract control, \(reason))")
+            connection.send("vk \(vk) up")
         }
     }
 
@@ -1689,13 +1738,14 @@ private final class KeyboardEventRouter {
 
     // The modifier keys themselves, reported via flagsChanged rather than
     // keyDown/keyUp. Cmd→Win / Ctrl→Ctrl by default; see invertCommandControl.
+    // Right Option is Windows AltGr (VK_RMENU), not left Alt.
     private static let modifierVirtualCodes: [CGKeyCode: UInt16] = [
         CGKeyCode(kVK_Shift): 0x10,
         CGKeyCode(kVK_RightShift): 0x10,
         CGKeyCode(kVK_Control): 0x11,
         CGKeyCode(kVK_RightControl): 0x11,
         CGKeyCode(kVK_Option): 0x12,
-        CGKeyCode(kVK_RightOption): 0x12,
+        CGKeyCode(kVK_RightOption): 0xA5,
         CGKeyCode(kVK_Command): 0x5B,
         CGKeyCode(kVK_RightCommand): 0x5B,
         CGKeyCode(kVK_CapsLock): 0x14

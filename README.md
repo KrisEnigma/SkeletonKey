@@ -48,8 +48,8 @@ error.
 
 - Games: letter keys arrive as typed text, not physical presses, so WASD and
   similar binds don't work. Many titles also ignore injected input entirely.
-- Option/Alt isn't a Windows shortcut modifier (kept so punctuation still
-  types).
+- Option/Alt: left Option is left Alt; right Option is AltGr. Option still
+  isn't treated as a Windows shortcut modifier for letter keys (punctuation).
 - No media / Mission Control / brightness keys.
 - Unauthenticated TCP. Use a LAN or a tunnel you trust; don't expose the port.
 
