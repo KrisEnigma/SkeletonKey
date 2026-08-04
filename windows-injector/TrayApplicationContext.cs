@@ -17,12 +17,14 @@ internal sealed class TrayApplicationContext : ApplicationContext
     private readonly SettingsForm settingsForm;
     private readonly ToolStripMenuItem statusMenuItem;
     private readonly System.Windows.Forms.Timer clipboardTimer = new() { Interval = 300 };
+    private readonly bool startMinimized;
     private string? suppressClipboardText;
     private string? lastSentClipboardText;
     private bool capturing;
 
     public TrayApplicationContext(int? cliPortOverride, bool startMinimized = false)
     {
+        this.startMinimized = startMinimized;
         settingsForm = new SettingsForm(listener);
         // Force handle creation now so BeginInvoke below is safe even before
         // the window has ever been shown.
@@ -36,6 +38,15 @@ internal sealed class TrayApplicationContext : ApplicationContext
         menu.Items.Add(statusMenuItem);
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add(openItem);
+        if (Elevation.IsElevated())
+        {
+            menu.Items.Add(new ToolStripMenuItem("Running as administrator") { Enabled = false });
+        }
+        else
+        {
+            menu.Items.Add(new ToolStripMenuItem("Restart as administrator…", null, (_, _) => RestartElevated()));
+        }
+        menu.Items.Add(BuildStartupMenuItem());
         menu.Items.Add(quitItem);
 
         trayIcon = new NotifyIcon
@@ -85,6 +96,37 @@ internal sealed class TrayApplicationContext : ApplicationContext
         {
             settingsForm.Show();
         }
+    }
+
+    private void RestartElevated()
+    {
+        var args = new List<string>();
+        if (startMinimized)
+        {
+            args.Add("--minimized");
+        }
+        args.Add("--admin");
+        if (listener.Port > 0)
+        {
+            args.Add(listener.Port.ToString());
+        }
+
+        if (Elevation.TryRelaunchElevated(args))
+        {
+            ExitApplication();
+        }
+    }
+
+    private static ToolStripMenuItem BuildStartupMenuItem()
+    {
+        var installed = ElevatedStartup.IsInstalled();
+        return new ToolStripMenuItem(
+            installed ? "Disable elevated startup at login" : "Enable elevated startup at login…",
+            null,
+            (_, _) => Elevation.TryRelaunchElevated(new[]
+            {
+                installed ? "--uninstall-startup" : "--install-startup"
+            }));
     }
 
     private void RunOnUiThread(Action action)

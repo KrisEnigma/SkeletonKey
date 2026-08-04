@@ -8,20 +8,26 @@ import Network
 private let appLogURL = FileManager.default.homeDirectoryForCurrentUser
     .appendingPathComponent("Library/Logs/SkeletonKey/app.log")
 
+private let appLogQueue = DispatchQueue(label: "SkeletonKey.appLog")
+
 private func appLog(_ line: String) {
+    // Never do file I/O on the CGEvent tap thread — sync logging there can
+    // trip tapDisabledByTimeout and silently kill keyboard+mouse forwarding.
     let message = "[SkeletonKey] \(line)\n"
     let data = Data(message.utf8)
-    let directory = appLogURL.deletingLastPathComponent()
-    try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-    if FileManager.default.fileExists(atPath: appLogURL.path) == false {
-        FileManager.default.createFile(atPath: appLogURL.path, contents: nil)
+    appLogQueue.async {
+        let directory = appLogURL.deletingLastPathComponent()
+        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        if FileManager.default.fileExists(atPath: appLogURL.path) == false {
+            FileManager.default.createFile(atPath: appLogURL.path, contents: nil)
+        }
+        if let handle = try? FileHandle(forWritingTo: appLogURL) {
+            handle.seekToEndOfFile()
+            try? handle.write(contentsOf: data)
+            try? handle.close()
+        }
+        fputs(message, stderr)
     }
-    if let handle = try? FileHandle(forWritingTo: appLogURL) {
-        handle.seekToEndOfFile()
-        try? handle.write(contentsOf: data)
-        try? handle.close()
-    }
-    fputs(message, stderr)
 }
 
 private func requestAccessibilityAccess() {
@@ -1281,12 +1287,12 @@ private final class KeyboardEventRouter {
     /// on Windows. Default off (⌘ = Win, ⌃ = Ctrl).
     private var invertCommandControl = false
 
-    // Modifier-down events are held here instead of being sent immediately.
-    // If the next event turns out to be the app's own toggle hotkey, we drop
-    // them silently; otherwise we flush them right before the key they're
-    // modifying. This is what stops the toggle hotkey's own modifier presses
-    // from leaking to the remote host as an unmatched "key down".
+    // Modifier-down events that belong to the toggle hotkey chord are held
+    // briefly so a completed toggle can drop them without leaking to Windows.
+    // Everything else is sent immediately — required for Mac keyboard + PC
+    // mouse (local clicks never flush through the Mac event tap).
     private var armedModifiers: [CGKeyCode: UInt16] = [:]
+    private var armedFlushWorkItem: DispatchWorkItem?
 
     // Modifiers we've actually confirmed sending "down" for. A modifier can
     // be physically held (e.g. Option, from habit, or Cmd/Option already
@@ -1316,10 +1322,18 @@ private final class KeyboardEventRouter {
         invertCommandControl = invert
     }
 
+    /// Called when capture turns on. Seeds any modifiers already held so
+    /// Shift/Ctrl are live on Windows before a PC-side mouse click.
+    func syncHeldModifiersAtCaptureStart() {
+        let flags = CGEventSource.flagsState(.hidSystemState)
+        armOrSendModifiers(matching: flags, preferImmediate: true)
+    }
+
     /// Called when capture turns off. Releases any modifier we told Windows
     /// was "down" but never got to release (e.g. capture was stopped mid
     /// key-combo) so it doesn't stay stuck down on the remote side.
     func releaseAllHeldModifiers() {
+        cancelArmedFlush()
         for keyCode in sentModifierKeyCodes {
             guard let vk = virtualKey(forModifier: keyCode) else { continue }
             appLog("keyboard: vk \(vk) up (released on capture end)")
@@ -1331,15 +1345,6 @@ private final class KeyboardEventRouter {
     }
 
     fileprivate func handle(type: CGEventType, event: CGEvent) -> Bool {
-        // Unconditional, regardless of capture state, this is the ground
-        // truth for whether the tap is receiving keyboard events at all.
-        // Mouse-only taps need just Accessibility permission; keyDown/keyUp
-        // specifically also require Input Monitoring, a separate grant. If
-        // this line never appears for plain letter keys while flagsChanged
-        // lines do, that's the tell: Input Monitoring isn't actually active.
-        let loggedKeyCode = CGKeyCode(event.getIntegerValueField(.keyboardEventKeycode))
-        appLog("keyboard: tap saw type=\(type.rawValue) keyCode=\(loggedKeyCode) capturing=\(state.isCapturing())")
-
         // Always swallow the toggle hotkey — even when Off. Combos like ⇧§
         // insert a real character (° on many layouts); if we only intercept
         // while capturing, pressing the hotkey to Start types into whatever
@@ -1350,6 +1355,7 @@ private final class KeyboardEventRouter {
             if !armedModifiers.isEmpty {
                 appLog("keyboard: dropped toggle-hotkey modifiers \(armedModifiers.values.map { String($0) })")
             }
+            cancelArmedFlush()
             armedModifiers.removeAll()
             if type == .keyDown {
                 if toggleHotKeyPressed == false {
@@ -1443,17 +1449,14 @@ private final class KeyboardEventRouter {
         }
     }
 
-    /// Modifiers only get flushed automatically ahead of a *keyboard* key ,
-    /// but Ctrl/Alt held for a mouse action (Ctrl+click, Alt+drag, etc.)
-    /// would otherwise never get sent, since nothing keyboard-side ever
-    /// triggers the flush. The tap dispatcher calls this ahead of every
-    /// mouse event too, so Windows finds out about a held modifier before
-    /// the click/drag it's modifying arrives.
+    /// Modifiers that belong to the toggle chord stay armed briefly; others
+    /// are already live on Windows. Still flush here for Mac-trackpad paths.
     fileprivate func flushArmedModifiersForNonKeyActivity() {
         flushArmedModifiers()
     }
 
     private func flushArmedModifiers() {
+        cancelArmedFlush()
         guard !armedModifiers.isEmpty else {
             return
         }
@@ -1474,7 +1477,18 @@ private final class KeyboardEventRouter {
         let isDown = Self.modifierIsCurrentlyDown(keyCode: keyCode, flags: event.flags)
 
         if isDown {
-            armedModifiers[keyCode] = vk
+            if modifierBelongsToToggleHotKey(keyCode) {
+                // Hold briefly so a completed toggle can drop these without
+                // leaking; timer covers "held for PC mouse" if no key follows.
+                armedModifiers[keyCode] = vk
+                scheduleArmedModifierFlush()
+            } else {
+                // Immediate: Mac keyboard + PC wireless mouse never produces
+                // a Mac mouse event to flush armed modifiers.
+                appLog("keyboard: vk \(vk) down (immediate modifier)")
+                connection.send("vk \(vk) down")
+                sentModifierKeyCodes.insert(keyCode)
+            }
             return
         }
 
@@ -1488,6 +1502,11 @@ private final class KeyboardEventRouter {
             appLog("keyboard: vk \(vk) down+up (standalone tap)")
             connection.send("vk \(vk) down")
             connection.send("vk \(vk) up")
+            if armedModifiers.isEmpty {
+                cancelArmedFlush()
+            } else {
+                scheduleArmedModifierFlush()
+            }
             return
         }
 
@@ -1503,6 +1522,65 @@ private final class KeyboardEventRouter {
 
         appLog("keyboard: vk \(vk) up")
         connection.send("vk \(vk) up")
+    }
+
+    private func modifierBelongsToToggleHotKey(_ keyCode: CGKeyCode) -> Bool {
+        switch Int(keyCode) {
+        case kVK_Shift, kVK_RightShift:
+            return toggleHotKey.modifiers.contains(.shift)
+        case kVK_Control, kVK_RightControl:
+            return toggleHotKey.modifiers.contains(.control)
+        case kVK_Option, kVK_RightOption:
+            return toggleHotKey.modifiers.contains(.option)
+        case kVK_Command, kVK_RightCommand:
+            return toggleHotKey.modifiers.contains(.command)
+        default:
+            return false
+        }
+    }
+
+    private func scheduleArmedModifierFlush() {
+        cancelArmedFlush()
+        let work = DispatchWorkItem { [weak self] in
+            self?.flushArmedModifiers()
+        }
+        armedFlushWorkItem = work
+        // Long enough for Cmd-Option-K chord completion; short enough that
+        // holding a hotkey-chord modifier for a PC mouse click still works.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05, execute: work)
+    }
+
+    private func cancelArmedFlush() {
+        armedFlushWorkItem?.cancel()
+        armedFlushWorkItem = nil
+    }
+
+    private func armOrSendModifiers(matching flags: CGEventFlags, preferImmediate: Bool) {
+        func consider(_ mask: CGEventFlags, left: Int, right: Int) {
+            guard flags.contains(mask) else { return }
+            let leftCode = CGKeyCode(left)
+            let rightCode = CGKeyCode(right)
+            let already =
+                sentModifierKeyCodes.contains(leftCode)
+                || sentModifierKeyCodes.contains(rightCode)
+                || armedModifiers.keys.contains(leftCode)
+                || armedModifiers.keys.contains(rightCode)
+            guard already == false, let vk = virtualKey(forModifier: leftCode) else { return }
+            if preferImmediate || modifierBelongsToToggleHotKey(leftCode) == false {
+                connection.send("vk \(vk) down")
+                sentModifierKeyCodes.insert(leftCode)
+            } else {
+                armedModifiers[leftCode] = vk
+            }
+        }
+
+        consider(.maskShift, left: kVK_Shift, right: kVK_RightShift)
+        consider(.maskControl, left: kVK_Control, right: kVK_RightControl)
+        consider(.maskAlternate, left: kVK_Option, right: kVK_RightOption)
+        consider(.maskCommand, left: kVK_Command, right: kVK_RightCommand)
+        if preferImmediate == false, !armedModifiers.isEmpty {
+            scheduleArmedModifierFlush()
+        }
     }
 
     /// Uses the Mac's active input source (e.g. Spanish LatAm) to resolve
@@ -1674,6 +1752,7 @@ private final class KeyboardEventRouter {
 private final class InputTapController {
     private let mouseRouter: MouseEventRouter
     private let keyboardRouter: KeyboardEventRouter
+    private var tap: CFMachPort?
 
     init(mouseRouter: MouseEventRouter, keyboardRouter: KeyboardEventRouter) {
         self.mouseRouter = mouseRouter
@@ -1708,6 +1787,15 @@ private final class InputTapController {
             }
 
             let controller = Unmanaged<InputTapController>.fromOpaque(userInfo).takeUnretainedValue()
+
+            if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
+                if let tap = controller.tap {
+                    CGEvent.tapEnable(tap: tap, enable: true)
+                    appLog("event tap re-enabled after \(type == .tapDisabledByTimeout ? "timeout" : "userInput")")
+                }
+                return nil
+            }
+
             let consumedLocally = controller.route(type: type, event: event)
             if consumedLocally {
                 // Forwarding is active: swallow the event so the Mac's own
@@ -1731,6 +1819,7 @@ private final class InputTapController {
             return nil
         }
 
+        self.tap = tap
         let source = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0)
         CFRunLoopAddSource(CFRunLoopGetCurrent(), source, .commonModes)
         CGEvent.tapEnable(tap: tap, enable: true)
@@ -2068,6 +2157,9 @@ final class SkeletonKeyAppDelegate: NSObject, NSApplicationDelegate {
             self.connectionManager.send("capturing \(capturing ? "on" : "off")")
             if capturing {
                 self.clipboardBridge.setForwarding(true)
+                // After Windows is capturing: seed modifiers already held so
+                // Mac keyboard + PC mouse Shift/Ctrl+click works immediately.
+                self.keyboardRouter.syncHeldModifiersAtCaptureStart()
             }
             appLog("capturing=\(capturing)")
         }

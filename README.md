@@ -38,14 +38,22 @@ certificate so Accessibility and Input Monitoring grants survive rebuilds.
 ```powershell
 powershell -ExecutionPolicy Bypass -File build-windows-app.ps1
 ```
-Builds `windows-injector\publish\SkeletonKey.exe`. Double-click it, put a
-shortcut on the Desktop, or drop one in `shell:startup` (Win+R, then
-`shell:startup`) to launch at login. For tray-only startup (no settings
-window), set the shortcut Target to:
+Builds `windows-injector\publish\SkeletonKey.exe`. Double-click it, or put a
+shortcut in `shell:startup` for tray-only login start:
 
 ```text
 "C:\path\to\SkeletonKey.exe" --minimized
 ```
+
+For elevated login **without** a UAC prompt every boot (needed for clicks
+into elevated Windows apps): open the tray menu and choose **Enable
+elevated startup at login…** (one UAC prompt). That registers a Task
+Scheduler logon task which starts `SkeletonKey.exe --minimized` with
+highest privileges. Remove any `shell:startup` shortcut afterward so you
+don't get two instances. Disable later from the same tray menu.
+
+`--admin` still works for a one-shot elevate (UAC each launch). Prefer the
+startup task for day-to-day.
 
 Re-run the script after changing Windows code.
 
@@ -146,6 +154,10 @@ When the Mac cannot reach the PC directly:
   etc.) are not forwarded.
 - Dead-key accent sequences should compose via macOS's own state, but this
   is not exhaustively tested across every layout.
+- The Windows listener cannot click the UAC consent dialog (secure desktop).
+  Clicks into elevated apps need SkeletonKey elevated too — use tray
+  **Enable elevated startup at login…** (one UAC, then silent elevated
+  starts) rather than `--admin` on every boot.
 - The link is unauthenticated. Keep it on a private network, or use
   something like ngrok so the port is not open to the public internet.
   Clipboard text crosses that same link during forwarding and the
