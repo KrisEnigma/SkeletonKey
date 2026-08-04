@@ -42,10 +42,11 @@ error.
 | Remote PC | `ngrok tcp 12653`, then point the Mac at the ngrok `host:port`. |
 | Windows tray | Close hides to tray. Port is under Edit / Apply. |
 | Login (tray) | Shortcut target: `"...\SkeletonKey.exe" --minimized` |
-| Login (admin) | Tray → **Enable elevated startup at login...** (one UAC, then silent). Needed for elevated apps; still can't click the UAC dialog itself. |
 
 ## Limits
 
+- UAC: the Yes/No elevation prompt can't be clicked remotely. Windows puts
+  it on a secure desktop; use the PC's own mouse/keyboard for that dialog.
 - Games: letter keys arrive as typed text, not physical presses, so WASD and
   similar binds don't work. Many titles also ignore injected input entirely.
 - Option/Alt: left Option is left Alt; right Option is AltGr. Option still
